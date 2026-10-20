@@ -1,0 +1,17 @@
+<style>
+.nav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;align-items:center}
+.nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:999px;
+  font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap;
+  background:var(--card,#fff);color:var(--sub,#6b8286);border:1px solid var(--line,#dfe9ea)}
+.nav a.on{background:var(--accent,#1f7f88);color:#fff;border-color:var(--accent,#1f7f88)}
+.nav a:hover{border-color:var(--accent,#1f7f88)}
+.nav a:active{opacity:.7}
+@media print{.nav{display:none!important}}
+</style>
+<div class="nav">
+  <a href="<?= navUrl ?>"            class="<?= (navNow==='inspect') ? 'on' : '' ?>"<?= (navNow==='inspect') ? ' aria-current="page"' : '' ?>>🔧 点検</a>
+  <a href="<?= navUrl ?>?p=ledger"   class="<?= (navNow==='ledger')  ? 'on' : '' ?>"<?= (navNow==='ledger')  ? ' aria-current="page"' : '' ?>>📋 台帳</a>
+  <a href="<?= navUrl ?>?p=history"  class="<?= (navNow==='history') ? 'on' : '' ?>"<?= (navNow==='history') ? ' aria-current="page"' : '' ?>>🕘 履歴</a>
+  <a href="<?= navUrl ?>?p=admin"    class="<?= (navNow==='admin')   ? 'on' : '' ?>"<?= (navNow==='admin')   ? ' aria-current="page"' : '' ?>>⚙️ マスタ</a>
+  <a href="<?= navUrl ?>?p=qr"       class="<?= (navNow==='qr')      ? 'on' : '' ?>"<?= (navNow==='qr')      ? ' aria-current="page"' : '' ?>>🏷 QR</a>
+</div>

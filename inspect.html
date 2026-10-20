@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('css'); ?>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <h1>🏥 医療機器DX台帳</h1><span>🔧 点検入力</span>
+  </div>
+
+  <div id="err" class="msg err hide"></div>
+
+  <!-- ===== パスワード ===== -->
+  <div id="vPw" class="hide">
+    <div class="card">
+      <h2>🔑 パスワード</h2>
+      <label for="pw">🏥 現場共通のパスワードを入力してね</label>
+      <input type="password" id="pw" inputmode="numeric" autocomplete="off"
+             onkeydown="if(event.key==='Enter')doLogin()">
+      <p class="sub">😌 一度入力すると30日間は省略されます</p>
+      <button class="btn" id="btnPw" onclick="doLogin()">🔓 開く</button>
+    </div>
+  </div>
+
+  <!-- ===== 機器の指定 ===== -->
+  <div id="vFind" class="hide">
+    <div class="card">
+      <h2>🔍 機器を選ぶ</h2>
+      <button class="btn btn-big" id="btnShot" onclick="shootQr()">📷 QRをスキャン</button>
+      <p class="sub center" style="margin:10px 0 0">
+        🏷 カメラでQRラベルを読み取ります</p>
+
+      <button class="btn-sub" id="btnPhoto" onclick="shootPhoto()" style="margin-top:10px">
+        📸 写真から読む</button>
+
+      <p class="sub center" style="margin:16px 0 6px">— ⌨️ または手入力 —</p>
+      <label for="kanri" id="kanriHint">🏷 管理番号</label>
+      <input type="text" id="kanri" placeholder="A1403" autocapitalize="characters"
+             autocomplete="off" onkeydown="if(event.key==='Enter')findByInput()">
+      <button class="btn-sub" id="btnFind" onclick="findByInput()" style="margin-top:8px">
+        📥 読み込む</button>
+    </div>
+  </div>
+
+  <!-- ===== 点検・故障報告 ===== -->
+  <div id="vMain" class="hide">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <div style="font-weight:700;font-size:16px" id="devName"></div>
+          <div class="sub" id="devNo"></div>
+        </div>
+        <span class="badge" id="devStatus"></span>
+      </div>
+      <dl class="kv" id="devBody" style="margin:12px 0 14px"></dl>
+      <button class="btn-sub" id="btnDocs" onclick="openDocs()">📎 書類を見る</button>
+    </div>
+
+    <div class="card">
+      <h2>🙋 実施者</h2>
+      <select id="user" onchange="rememberUser()"></select>
+      <button class="btn-link" id="btnAllUsers" onclick="toggleUsers()"></button>
+    </div>
+
+    <div id="formArea"></div>
+
+    <button class="btn-sub" onclick="nextDevice()">🔍 別の機器を選ぶ</button>
+  </div>
+
+  <!-- ===== 完了 ===== -->
+  <div id="vDone" class="hide">
+    <div class="card center">
+      <div class="done-emoji" id="doneEmoji">🎉</div>
+      <h2 id="doneTitle">🎉 登録しました</h2>
+      <p class="sub" id="doneBody"></p>
+      <button class="btn btn-big" onclick="shootQr()" style="margin-top:10px">
+        📷 次の機器のQRをスキャン</button>
+      <button class="btn-sub" onclick="startEdit()" style="margin-top:8px">
+        ✏️ この記録を修正する</button>
+      <button class="btn-link" onclick="nextDevice()" style="margin-top:10px">
+        ⌨️ 管理番号を手入力する</button>
+    </div>
+  </div>
+
+  <!-- QR読み取り用・写真添付用（画面には出ない） -->
+  <input type="file" id="qrFile" accept="image/*" capture="environment"
+         style="display:none" onchange="onPhoto(this)">
+  <input type="file" id="photoFile" accept="image/*" capture="environment" multiple
+         style="display:none" onchange="onPickPhoto(this)">
+  <canvas id="cv" class="hide"></canvas>
+</div>
+
+<!-- ===== 書類の一覧 ===== -->
+<div class="ov" id="ovDocs" onclick="if(event.target===this)closeDocs()">
+  <div class="dlg">
+    <h2>📎 書類ボックス</h2>
+    <p class="sub" style="margin:0 0 10px">👆 タップすると中身を開きます。</p>
+    <div id="docsBody"></div>
+    <button class="btn-sub close" onclick="closeDocs()">✖️ 閉じる</button>
+  </div>
+</div>
+
+<!-- ===== 書類のビューア ===== -->
+<div class="ov" id="ovView" onclick="if(event.target===this)closeView()">
+  <div class="dlg">
+    <h2 id="viewTitle"></h2>
+    <div id="viewBody" style="margin-top:10px"></div>
+    <button class="btn-sub close" onclick="closeView()">✖️ 閉じる</button>
+  </div>
+</div>
+
+<script>var INIT_ID = <?!= JSON.stringify(initId) ?>;</script>
+<?!= include('jsqr'); ?>
+<?!= include('js'); ?>
+</body>
+</html>

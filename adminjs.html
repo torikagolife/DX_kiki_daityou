@@ -1,0 +1,1088 @@
+<script>
+var S = { token:'', name:'dev', ctx:null, editKey:null };
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+/* 列名につける絵文字（表示だけ。データの読み書きには使わない） */
+var COLIC = {
+  '管理番号':'🏷','機器名':'🩺','機器区分名':'🗂','機器区分ID':'🗂',
+  'メーカー名':'🏭','メーカーID':'🏭','部署名':'🏢','部署ID':'🏢',
+  '保管場所名':'📍','保管場所ID':'📍','拠点':'🏥','ステータス':'🚦',
+  '型番':'🔤','製造番号':'🔢','資産番号':'💠','使用開始日':'🗓',
+  '保守契約有無':'🤝','クラス分類':'⚠️','ファイルBOXID':'📂','備考':'📝',
+  '職員番号':'🆔','ユーザー名':'👤','権限':'🔑','有効':'🔘',
+  '担当者':'🙋','担当者１':'🙋','担当者２':'🙋','表示順':'🔢',
+  '電話番号':'☎️','メールアドレス':'✉️','ホームページ':'🌐',
+  '点検表名':'📋','点検表ID':'📋','点検区分':'🔖',
+  '部署点検周期(月)':'🔁','業者点検周期(月)':'🛠','特定保守管理医療機器':'⭐',
+  '点検項目ID':'☑️','項目名':'✍️','入力形式':'⌨️','必須':'❗',
+  'アクションID':'⚡','アクション名':'⚡','ステータス更新':'🚦','点検日更新':'🗓'
+};
+function colIc(c){ var i = COLIC[c]; return i ? i + ' ' : ''; }
+
+/* admin.html に手を入れずに、ボタンや検索欄を飾る */
+function decorate_(){
+  var b1 = document.getElementById('btnPw');
+  if (b1) b1.innerHTML = '🔓 開く';
+  var b2 = document.getElementById('btnSave');
+  if (b2) b2.innerHTML = '💾 保存する';
+  var q = document.getElementById('q');
+  if (q) q.placeholder = '🔍 キーワードで絞り込み（どの列でも部分一致）';
+}
+
+function show(id){
+  ['vPw','vMain'].forEach(function(v){
+    document.getElementById(v).classList.toggle('hide', v !== id);
+  });
+}
+function msg(text, isErr){
+  var e = document.getElementById('msg');
+  e.textContent = text;
+  e.className = 'msg ' + (isErr ? 'err' : 'ok');
+  setTimeout(function(){ e.classList.add('hide'); }, 5000);
+}
+function busy(on, el, label){
+  if (!el) return;
+  el.disabled = on;
+  el.innerHTML = on ? '<span class="spin"></span>処理中…' : label;
+}
+
+/* ---------- 認証 ---------- */
+function tk(){ try{ return localStorage.getItem('mkdx_admin_tk') || ''; }catch(e){ return ''; } }
+function setTk(t){ S.token = t; try{ localStorage.setItem('mkdx_admin_tk', t); }catch(e){} }
+function clrTk(){ S.token=''; try{ localStorage.removeItem('mkdx_admin_tk'); }catch(e){} }
+
+window.addEventListener('DOMContentLoaded', function(){
+  fbSetup();                                 // ファイルBOXの部品をここで組む
+  decorate_();                               // ボタンや検索欄に絵文字を足す
+  bindRowClick_();                           // 行のどこを押しても編集を開く
+  bindResize_();                             // 窓の大きさが変わったら固定列を測り直す
+  var t = tk();
+  if (!t){ show('vPw'); document.getElementById('pw').focus(); return; }
+  S.token = t;
+  google.script.run
+    .withSuccessHandler(function(ok){
+      if (!ok){ clrTk(); show('vPw'); return; }
+      load('dev');
+    })
+    .withFailureHandler(function(){ clrTk(); show('vPw'); })
+    .pingToken(t, 'admin');
+});
+
+function doLogin(){
+  var el = document.getElementById('btnPw');
+  var pw = document.getElementById('pw').value;
+  if (!pw){ msg('🔑 パスワードを入力してください', true); return; }
+  busy(true, el, '🔓 開く');
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '🔓 開く');
+      if (!r.ok){ msg('🙅 パスワードが違います', true); return; }
+      setTk(r.token);
+      document.getElementById('pw').value = '';
+      load('dev');
+    })
+    .withFailureHandler(function(e){ busy(false, el, '🔓 開く');
+                                     msg('⚠️ ' + e.message, true); })
+    .verifyPassword(pw, 'admin');
+}
+
+/* ---------- 読み込み ---------- */
+function load(name){
+  S.name = name;
+  google.script.run
+    .withSuccessHandler(function(ctx){
+      S.ctx = ctx;
+      renderTabs();
+      document.getElementById('q').value = '';
+      // 無効も表示のチェックは、有効フラグを持たないマスタでは隠す
+      document.getElementById('showOff').parentNode.style.display =
+        ctx.noActive ? 'none' : '';
+      // 先に表示する。隠れたままだと列の幅が0で測れず、
+      // 左端に貼り付ける列の位置がずれる
+      show('vMain');
+      render();
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      msg('⚠️ ' + e.message, true);
+    })
+    .apiGetMaster(S.token, name);
+}
+
+function renderTabs(){
+  document.getElementById('tabs').innerHTML = S.ctx.tabs.map(function(t){
+    return '<button class="tab' + (t.name === S.name ? ' on' : '') + '" '
+         + 'onclick="load(\'' + t.name + '\')">' + esc(t.label) + '</button>';
+  }).join('');
+}
+
+/* ---------- 一覧 ---------- */
+function rows(){
+  var q = document.getElementById('q').value.trim().toUpperCase();
+  var off = document.getElementById('showOff').checked;
+  return S.ctx.rows.filter(function(r){
+    if (!S.ctx.noActive && !off && !r._active) return false;
+    if (!q) return true;
+    for (var i = 0; i < S.ctx.cols.length; i++){
+      if (String(r[S.ctx.cols[i]] || '').toUpperCase().indexOf(q) >= 0) return true;
+    }
+    return false;
+  });
+}
+
+function render(){
+  if (!S.ctx) return;
+  var list = rows();
+  var isDev = (S.ctx.special === 'device');
+  document.getElementById('cnt').textContent = '📄 ' + list.length + ' 件';
+
+  var h = '<thead><tr>';
+  if (isDev) h += '<th class="fb-thcol">写真</th>';       // ← 機器マスタだけ写真列
+  S.ctx.cols.forEach(function(c, ci){
+    h += '<th' + (ci === 0 ? ' class="key-col"' : '') + '>'
+       + colIc(c) + esc(c) + '</th>';
+  });
+  h += '<th></th></tr></thead><tbody>';
+
+  if (!list.length){
+    h += '<tr><td colspan="' + (S.ctx.cols.length + 1 + (isDev ? 1 : 0)) + '" class="sub" '
+       + 'style="text-align:center;padding:24px">🔍 該当なし</td></tr>';
+  }
+
+  list.forEach(function(r){
+    var sc = '';
+    if (isDev){
+      var st = String(r['ステータス'] || '');
+      if (st === '廃棄' || st === '紛失') sc = ' class="st-retired"';
+      else if (st === '故障中') sc = ' class="st-trouble"';
+      else if (st === '修理中') sc = ' class="st-repair"';
+      else if (st === '貸出中') sc = ' class="st-lend"';
+    }
+    if (!sc && !r._active) sc = ' class="off"';
+    h += '<tr' + sc + ' data-key="' + esc(r._key) + '">';
+
+    // 写真（画面に出た行だけ、あとからまとめて取りにいく）
+    if (isDev){
+      h += '<td class="fb-thcol" data-fbthumb="' + esc(r._key) + '">'
+         + '<span class="fb-ph">—</span></td>';
+    }
+
+    S.ctx.cols.forEach(function(c, ci){
+      var keyCls = (ci === 0) ? ' class="key-col"' : '';
+      if (c === 'ステータス'){
+        var v2 = String(r[c] || '');
+        var p = 'ok';
+        if (v2 === '廃棄' || v2 === '紛失') p = 'gy';
+        else if (v2 === '故障中') p = 'ng';
+        else if (v2 === '修理中') p = 'rp';
+        else if (v2 === '貸出中') p = 'ld';
+        var ic = { ok:'✅', ng:'🔧', rp:'🛠', ld:'📤', gy:'🗑' }[p];
+        h += '<td><span class="pill ' + p + '">' + ic + ' ' + esc(v2) + '</span></td>';
+        return;
+      }
+      h += '<td' + keyCls + '>' + esc(r[c]) + (c === S.ctx.key && !S.ctx.noActive && !r._active
+          ? ' <span class="sub">🚫 無効</span>' : '') + '</td>';
+    });
+
+    h += '<td class="act">';
+    // 機器マスタだけ、書類・写真のボタンを出す
+    if (isDev){
+      h += '<button class="btn-sub btn-sm" title="書類・写真" '
+         +   'onclick="fbOpenDocs(\'' + esc(r._key) + '\',\''
+         +   esc(String(r['機器名'] || '').replace(/'/g, '')) + '\')">📎</button>';
+    }
+    h += '<button class="btn-edit btn-sm" onclick="openDlg(\'' + esc(r._key) + '\')">'
+       +   '✏️ 編集</button>'
+       + '<button class="btn-copy btn-sm" onclick="openDlg(\'' + esc(r._key) + '\',true)">'
+       +   '📄 複製</button>';
+    // 有効フラグを持つマスタだけ無効化ボタンを出す
+    if (!S.ctx.noActive){
+      h += '<button class="' + (r._active ? 'btn-off' : 'btn-sub') + ' btn-sm" '
+         +   'onclick="toggle(\'' + esc(r._key) + '\',' + (r._active ? 'false' : 'true') + ')">'
+         +   (r._active ? '🚫 無効化' : '♻️ 有効化') + '</button>';
+    }
+    h += '</td></tr>';
+  });
+
+  document.getElementById('tbl').innerHTML = h + '</tbody>';
+  paintSticky_();
+  if (isDev) fbWatchThumbs();
+}
+
+/* ---------- 一覧を見やすくする小細工 ---------- */
+
+// 右端に貼り付けた操作列は、下の行が透けて見えてしまう。
+// 行と同じ背景色を塗って隠す。色は admincss.html 側で決まっているので、
+// 決め打ちせず、実際に描かれている色を読み取って使う
+function paintSticky_(){
+  var tbl = document.getElementById('tbl');
+  if (!tbl) return;
+
+  // 主キー列を貼り付ける位置。写真列があるぶんだけ右へずらす。
+  // 見出しが測れないときは本体の行で測る
+  var thPhoto = tbl.querySelector('thead th.fb-thcol');
+  var tdPhoto = tbl.querySelector('tbody td.fb-thcol');
+  var leftKey = thPhoto ? Math.round(thPhoto.getBoundingClientRect().width) : 0;
+  if (!leftKey && tdPhoto) leftKey = Math.round(tdPhoto.getBoundingClientRect().width);
+  var keys = tbl.querySelectorAll('.key-col');
+  for (var k = 0; k < keys.length; k++) keys[k].style.left = leftKey + 'px';
+
+  var h0 = tbl.querySelector('thead th');
+  var hL = tbl.querySelector('thead th:last-child');
+  var headBg = h0 ? getComputedStyle(h0).backgroundColor : '';
+  if (hL && headBg) hL.style.background = headBg;
+  if (headBg){
+    var hs = tbl.querySelectorAll('thead th.fb-thcol, thead th.key-col');
+    for (var j = 0; j < hs.length; j++) hs[j].style.background = headBg;
+  }
+
+  // 行に色が付いていないときの受け皿は、表の入れ物の色。
+  // body の色を使うと、白い表の上に外側の色が乗って浮いてしまう
+  var fallback = getComputedStyle(tbl.parentNode || document.body).backgroundColor;
+  if (!fallback || fallback === 'transparent' || fallback === 'rgba(0, 0, 0, 0)'){
+    fallback = getComputedStyle(document.body).backgroundColor;
+  }
+  var cache = {};
+  var rows = tbl.querySelectorAll('tbody tr');
+  for (var i = 0; i < rows.length; i++){
+    var cells = rows[i].querySelectorAll('td.act, td.key-col, td.fb-thcol');
+    if (!cells.length) continue;
+    var key = (rows[i].className || '_') + '|' + (i % 2);
+    if (cache[key] === undefined){
+      var c = getComputedStyle(rows[i]).backgroundColor;
+      cache[key] = (!c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)') ? fallback : c;
+    }
+    for (var n = 0; n < cells.length; n++) cells[n].style.background = cache[key];
+  }
+}
+
+// 窓の幅が変わると列の幅も変わるので、貼り付けた列の位置を測り直す。
+// 連続して呼ばれるので、少し待ってから1回だけ走らせる
+function bindResize_(){
+  var timer = null;
+  window.addEventListener('resize', function(){
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function(){ timer = null; paintSticky_(); }, 150);
+  });
+}
+
+// 行のどこを押しても編集を開く。操作列のボタンを探さなくて済む。
+// 一覧は作り直すので、イベントは外側の table に1回だけ付ける
+function bindRowClick_(){
+  var tbl = document.getElementById('tbl');
+  if (!tbl || tbl.dataset.bound) return;
+  tbl.dataset.bound = '1';
+  tbl.addEventListener('click', function(e){
+    if (e.target.closest('button, a, input, select, label')) return;
+    var tr = e.target.closest('tr[data-key]');
+    if (tr && tr.dataset.key) openDlg(tr.dataset.key);
+  });
+}
+
+/* ---------- 編集ダイアログ ---------- */
+// copy=true なら、その行の値を初期値にした「新規登録」として開く
+function openDlg(key, copy){
+  var src = key ? S.ctx.rows.filter(function(r){ return r._key === key; })[0] : null;
+  var isCopy = !!(copy && src);
+
+  // コピーは新規扱い。引き継がない列はここで空にする
+  var rec = src;
+  if (isCopy){
+    rec = {};
+    for (var k in src) rec[k] = src[k];
+    (S.ctx.copySkip || []).forEach(function(c){ rec[c] = ''; });
+    rec[S.ctx.key] = '';
+    rec._active = true;
+    S.editKey = null;
+  } else {
+    S.editKey = key;
+  }
+
+  var isDev = (S.ctx.special === 'device');
+  var isNew = !S.editKey;
+
+  var dIc = S.ctx.icon || '📑';
+  document.getElementById('dlgTitle').textContent =
+    isCopy ? ('📄 ' + dIc + ' ' + S.ctx.label + ' を複製して登録')
+           : ((key ? '✏️ ' : '✨ ') + dIc + ' ' + S.ctx.label
+              + (key ? ' を編集' : ' を登録'));
+  document.getElementById('dlgErr').classList.add('hide');
+
+  var h = '';
+
+  if (isCopy){
+    h += '<div class="msg ok" style="margin-bottom:14px">'
+       + '📄 ' + esc(src._key) + ' の内容をコピーしました。'
+       + ((S.ctx.copySkip || []).length
+          ? '<br><span class="sub">🧹 ' + esc((S.ctx.copySkip || []).join('・'))
+            + ' は空にしてあります</span>' : '')
+       + '</div>';
+  }
+
+  // 機器を編集するときだけ、代表写真と書類ボックスを先頭に出す
+  if (isDev && !isNew){
+    h += '<div class="fb-dev">'
+       +   '<div class="fb-dev-img" id="fbDlgThumb">'
+       +     '<span class="fb-ph"><span class="spin"></span></span>'
+       +   '</div>'
+       +   '<div class="fb-dev-side">'
+       +     '<div class="sub" style="margin-bottom:6px">'
+       +       '⭐ 代表写真（一覧・点検画面に出ます）</div>'
+       +     '<div class="fb-dev-btns">'
+       +       '<button type="button" class="btn-sub btn-sm" onclick="fbPickThumb()">'
+       +         '🖼 写真を選ぶ</button>'
+       +       '<button type="button" class="btn-sub btn-sm" onclick="fbClearThumbNow()">'
+       +         '🗑 外す</button>'
+       +       '<button type="button" class="btn-sub btn-sm" onclick="fbOpenDocsFromDlg()">'
+       +         '📎 書類・写真</button>'
+       +     '</div>'
+       +   '</div>'
+       + '</div>';
+  }
+
+  // 機器の新規登録だけ、登録者と導入日を先に聞く
+  if (isDev && isNew){
+    var uopt = (S.ctx.users || []).map(function(u){
+      return '<option value="' + esc(u.id) + '">' + esc(u.name) + '</option>';
+    }).join('');
+    h += '<div class="fld"><label>🙋 登録者<span class="req">*</span></label>'
+       + '<select id="introUser"><option value="">👇 選択してください</option>'
+       + uopt + '</select></div>';
+    h += '<div class="fld"><label>🗓 導入日</label>'
+       + '<input type="date" id="introDate" value="' + esc(S.ctx.today || '') + '"></div>';
+    h += '<div class="sub" style="margin:-4px 0 14px">'
+       + '📝 保存すると導入の履歴（ACT001）も同時に記録されます。'
+       + '<br>📎 写真や取説は、保存したあとに「📎」から入れられます。</div>';
+  }
+
+  S.ctx.fields.forEach(function(f){
+    if (f.type === 'fv') return;                         // 自動で埋まるので出さない
+
+    if (f.type === 'status'){
+      // ステータスは履歴で動かすので表示のみ
+      if (!isNew){
+        h += fld_(f, '<input type="text" value="' + esc(rec[f.col])
+                   + '" disabled style="opacity:.6">')
+           + '<div class="sub" style="margin:-8px 0 12px">'
+           + '🚦 ステータスは点検画面の故障報告などで変わります</div>';
+      }
+      return;
+    }
+    if (f.type === 'id'){
+      if (!isNew) h += fld_(f, '<input type="text" value="' + esc(rec[f.col])
+                           + '" disabled style="opacity:.6">');
+      else        h += fld_(f, '<input type="text" value="🔢 保存時に自動採番します" '
+                           + 'disabled style="opacity:.6">');
+      return;
+    }
+    if (f.pk && !isNew){
+      h += fld_(f, '<input type="text" value="' + esc(rec[f.col])
+                 + '" disabled style="opacity:.6">');
+      return;
+    }
+
+    var v = rec ? rec[f.col] : '';
+    if (f.type === 'ref'){
+      var opts = (S.ctx.refs[f.ref] || []).map(function(o){
+        return '<option value="' + esc(o.id) + '"' + (String(v) === o.id ? ' selected' : '')
+             + '>' + esc(o.name) + '（' + esc(o.id) + '）</option>';
+      }).join('');
+      h += fld_(f, '<select data-c="' + esc(f.col) + '">'
+               + '<option value="">👇 選択してください</option>' + opts + '</select>');
+    } else if (f.type === 'select'){
+      var o2 = (f.options || []).map(function(o){
+        return '<option value="' + esc(o) + '"' + (String(v) === o ? ' selected' : '') + '>'
+             + (o === '' ? '— なし —' : esc(o)) + '</option>';
+      }).join('');
+      h += fld_(f, '<select data-c="' + esc(f.col) + '">' + o2 + '</select>');
+    } else if (f.type === 'active'){
+      var on = rec ? rec._active : true;
+      h += fld_(f, '<select data-c="' + esc(f.col) + '">'
+               + '<option value="true"'  + (on  ? ' selected' : '') + '>🔵 有効</option>'
+               + '<option value="false"' + (!on ? ' selected' : '') + '>🚫 無効</option></select>');
+    } else if (f.type === 'order'){
+      h += fld_(f, '<input type="number" data-c="' + esc(f.col) + '" value="' + esc(v)
+               + '" placeholder="空欄なら自動で最後に並びます">');
+    } else if (f.type === 'num'){
+      h += fld_(f, '<input type="number" step="any" data-c="' + esc(f.col) + '" value="'
+               + esc(v) + '">');
+    } else if (f.type === 'date'){
+      h += fld_(f, '<input type="date" data-c="' + esc(f.col) + '" value="'
+               + esc(String(v).replace(/\//g, '-')) + '">');
+    } else {
+      h += fld_(f, '<input type="text" data-c="' + esc(f.col) + '" value="' + esc(v) + '">');
+    }
+  });
+
+  document.getElementById('dlgBody').innerHTML = h;
+  document.getElementById('ov').classList.add('on');
+
+  // 代表写真を取りにいく（ダイアログを出すのは待たせない）
+  if (isDev && !isNew){
+    FB.dlgNo   = S.editKey;
+    FB.dlgName = String((rec && rec['機器名']) || '');
+    fbLoadDlgThumb();
+  } else {
+    FB.dlgNo = ''; FB.dlgName = '';
+  }
+
+  // コピーのときは主キーの欄にカーソルを置く（そこだけ埋めれば済むので）
+  if (isCopy){
+    setTimeout(function(){
+      var pk = document.querySelector('#dlgBody [data-c="' + S.ctx.key + '"]');
+      if (pk) pk.focus();
+    }, 60);
+  }
+}
+
+function fld_(f, inner){
+  return '<div class="fld"><label>' + colIc(f.col) + esc(f.col)
+       + (f.required ? '<span class="req">*</span>' : '') + '</label>' + inner + '</div>';
+}
+
+function closeDlg(){
+  document.getElementById('ov').classList.remove('on');
+  S.editKey = null;
+  FB.dlgNo = ''; FB.dlgName = '';
+}
+
+function save(){
+  var values = {};
+  document.querySelectorAll('#dlgBody [data-c]').forEach(function(el){
+    values[el.dataset.c] = el.value;
+  });
+
+  var payload = { name: S.name, key: S.editKey, values: values };
+
+  // 機器の新規登録だけ、登録者と導入日を添える
+  if (S.ctx.special === 'device' && !S.editKey){
+    var u = document.getElementById('introUser');
+    var d = document.getElementById('introDate');
+    if (u && !u.value){
+      var eb0 = document.getElementById('dlgErr');
+      eb0.textContent = '🙋 登録者を選択してください';
+      eb0.classList.remove('hide');
+      return;
+    }
+    payload.userId    = u ? u.value : '';
+    payload.introDate = d ? d.value : '';
+  }
+
+  var el = document.getElementById('btnSave');
+  busy(true, el, '💾 保存する');
+  var errBox = document.getElementById('dlgErr');
+  errBox.classList.add('hide');
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '💾 保存する');
+      closeDlg();
+      msg(r.isNew
+        ? '🎉 登録しました（' + r.key + (r.hid ? ' 🕘 履歴 ' + r.hid : '') + '）'
+        : '💾 保存しました（' + r.key + '）');
+      load(S.name);
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, '💾 保存する');
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      errBox.textContent = '⚠️ ' + e.message;
+      errBox.classList.remove('hide');
+    })
+    .apiSaveMaster(S.token, payload);
+}
+
+/* ---------- 有効・無効 ---------- */
+function toggle(key, active){
+  var word = active ? '♻️ 有効に戻します' : '🚫 無効にします';
+  if (!confirm(key + ' を' + word + '。よろしいですか？\n\n'
+             + '🗂 データは消えません。無効にすると選択肢に出なくなります。')) return;
+
+  google.script.run
+    .withSuccessHandler(function(){
+      msg(key + ' を' + (active ? '♻️ 有効に戻しました' : '🚫 無効にしました'));
+      load(S.name);
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      msg('⚠️ ' + e.message, true);
+    })
+    .apiToggleActive(S.token, S.name, key, active);
+}
+
+/* =============================================================
+ *  ファイルBOX（書類・写真）とサムネイル
+ *    admin.html / admincss.html には手を入れない。
+ *    必要なCSSとモーダルは、ここから差し込む。
+ * ============================================================= */
+
+var FB = {
+  no:'', name:'',                 // いま開いている機器
+  files:[], kinds:[],
+  viewUrl:'', viewName:'',
+  thumbs:{},                      // 管理番号 → dataURL（''＝写真なし）
+  pend:[], timer:null, obs:null,  // 一覧の遅延読み込み用
+  dlgNo:'', dlgName:'',           // 編集ダイアログで開いている機器
+  busy:false
+};
+
+var FB_THUMB_SIDE = 320, FB_THUMB_Q = 0.72;   // 代表写真はこのサイズに縮めて保存
+var FB_UP_SIDE    = 1600, FB_UP_Q    = 0.82;  // 書類としての写真はこのサイズ
+
+function fbEl(id){ return document.getElementById(id); }
+
+function fbSetup(){
+  /* ---- CSS ---- */
+  var css = ''
+  + '.fb-thcol{width:54px;text-align:center;padding:3px 4px!important}'
+  + '.fb-thcol img{width:44px;height:44px;object-fit:cover;border-radius:7px;'
+  +   'display:block;margin:0 auto;border:1px solid rgba(0,0,0,.12);cursor:pointer;'
+  +   'background:#fff}'
+  + '.fb-ph{color:#b9c3cd;font-size:12px}'
+  + '.fb-ov{position:fixed;inset:0;background:rgba(14,30,45,.55);display:none;'
+  +   'z-index:1000;padding:16px;overflow-y:auto;-webkit-overflow-scrolling:touch}'
+  + '.fb-ov.on{display:block}'
+  + '.fb-dlg{background:#fff;border-radius:12px;max-width:600px;margin:20px auto;'
+  +   'box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;color:#1c2b36}'
+  + '.fb-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;'
+  +   'padding:13px 14px;background:#f4f7fa;border-bottom:1px solid #e1e8ef}'
+  + '.fb-hd h3{margin:0;font-size:15px;font-weight:700;word-break:break-all}'
+  + '.fb-bd{padding:14px}'
+  + '.fb-x{border:none;background:#e1e8ef;color:#536574;border-radius:50%;width:28px;'
+  +   'height:28px;font-size:16px;line-height:1;flex:0 0 auto;font-weight:700;cursor:pointer}'
+  + '.fb-up{background:#f7fafc;border:1px dashed #c6d3df;border-radius:9px;'
+  +   'padding:10px 12px;margin-bottom:14px}'
+  + '.fb-up .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}'
+  + '.fb-up select{padding:7px 9px;font-size:13px;border:1.5px solid #cfd9e2;'
+  +   'border-radius:7px;background:#fff}'
+  + '.fb-kind{font-size:11px;font-weight:800;color:#1a5d8f;letter-spacing:.06em;'
+  +   'margin:14px 0 5px;padding-bottom:3px;border-bottom:1.5px solid #dbe5ee}'
+  + '.fb-row{display:flex;align-items:center;gap:9px;border:1.5px solid #e1e8ef;'
+  +   'border-radius:9px;padding:8px 10px;margin-bottom:6px;background:#fff}'
+  + '.fb-row:hover{border-color:#1a5d8f;background:#f7fbff}'
+  + '.fb-hit{display:flex;align-items:center;gap:9px;flex:1;min-width:0;border:none;'
+  +   'background:none;text-align:left;padding:0;cursor:pointer;font:inherit;color:inherit}'
+  + '.fb-ic{font-size:20px;flex:0 0 auto;line-height:1}'
+  + '.fb-tx{display:flex;flex-direction:column;min-width:0}'
+  + '.fb-nm{font-size:13px;font-weight:600;word-break:break-all;line-height:1.35}'
+  + '.fb-ops{display:flex;gap:4px;flex:0 0 auto}'
+  + '.fb-ops button{border:1px solid #cfd9e2;background:#fff;border-radius:6px;'
+  +   'padding:3px 6px;font-size:13px;line-height:1.2;cursor:pointer}'
+  + '.fb-ops button:hover{border-color:#1a5d8f;background:#eaf3fa}'
+  + '#fbvBody img{display:block;max-width:100%;height:auto;border-radius:8px;'
+  +   'border:1px solid #e1e8ef;background:#fff}'
+  + '.fb-dev{display:flex;gap:12px;align-items:flex-start;background:#f7fafc;'
+  +   'border:1px solid #e4ebf2;border-radius:10px;padding:10px;margin-bottom:16px}'
+  + '.fb-dev-img{width:96px;height:96px;flex:0 0 auto;border-radius:9px;overflow:hidden;'
+  +   'background:#fff;border:1px solid #dbe5ee;display:flex;align-items:center;'
+  +   'justify-content:center}'
+  + '.fb-dev-img img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer}'
+  + '.fb-dev-side{flex:1;min-width:0}'
+  + '.fb-dev-btns{display:flex;gap:6px;flex-wrap:wrap}'
+  + '.fb-note{font-size:12px;color:#7b8a99;margin-top:8px}'
+  + '@media print{.fb-ov,.fb-thcol{display:none!important}}';
+  var st = document.createElement('style');
+  st.type = 'text/css';
+  st.appendChild(document.createTextNode(css));
+  document.head.appendChild(st);
+
+  /* ---- モーダルと隠しファイル入力 ---- */
+  var box = document.createElement('div');
+  box.innerHTML = ''
+  + '<div class="fb-ov" id="fbOv">'
+  +   '<div class="fb-dlg">'
+  +     '<div class="fb-hd">'
+  +       '<div><h3 id="fbTitle">📎 書類ボックス</h3>'
+  +         '<div class="sub" id="fbSub"></div></div>'
+  +       '<button class="fb-x" onclick="fbCloseDocs()">✕</button>'
+  +     '</div>'
+  +     '<div class="fb-bd" id="fbBody"></div>'
+  +   '</div>'
+  + '</div>'
+  + '<div class="fb-ov" id="fbvOv" style="z-index:1010">'
+  +   '<div class="fb-dlg">'
+  +     '<div class="fb-hd">'
+  +       '<h3 id="fbvTitle"></h3>'
+  +       '<button class="fb-x" onclick="fbCloseView()">✕</button>'
+  +     '</div>'
+  +     '<div class="fb-bd" id="fbvBody"></div>'
+  +   '</div>'
+  + '</div>'
+  + '<input type="file" id="fbUpInput" multiple style="display:none" '
+  +   'onchange="fbOnUpload(this)">'
+  + '<input type="file" id="fbThumbInput" accept="image/*" style="display:none" '
+  +   'onchange="fbOnThumbPick(this)">';
+  document.body.appendChild(box);
+}
+
+/* ---------- 一覧のサムネイル（見えた行だけ取りにいく） ---------- */
+
+function fbPaint(el, url){
+  if (url){
+    var no = el.dataset.fbthumb;
+    el.innerHTML = '<img src="' + url + '" alt="" title="クリックで拡大" '
+                 + 'onclick="fbZoom(\'' + esc(no) + '\')">';
+  } else {
+    el.innerHTML = '<span class="fb-ph">—</span>';
+  }
+}
+
+function fbWatchThumbs(){
+  var cells = document.querySelectorAll('[data-fbthumb]');
+  if (!cells.length) return;
+
+  if (!('IntersectionObserver' in window)){
+    // 古いブラウザは先頭40件だけ出す（全件は重いので）
+    var n = 0;
+    cells.forEach(function(el){
+      var no = el.dataset.fbthumb;
+      if (FB.thumbs[no] !== undefined){ fbPaint(el, FB.thumbs[no]); return; }
+      if (n++ < 40){ FB.pend.push(no); }
+    });
+    fbQueue();
+    return;
+  }
+
+  if (!FB.obs){
+    FB.obs = new IntersectionObserver(function(ents){
+      ents.forEach(function(en){
+        if (!en.isIntersecting) return;
+        var el = en.target;
+        FB.obs.unobserve(el);
+        var no = el.dataset.fbthumb;
+        if (FB.thumbs[no] !== undefined){ fbPaint(el, FB.thumbs[no]); return; }
+        if (FB.pend.indexOf(no) < 0) FB.pend.push(no);
+        fbQueue();
+      });
+    }, { rootMargin: '300px' });
+  }
+
+  cells.forEach(function(el){
+    var no = el.dataset.fbthumb;
+    if (FB.thumbs[no] !== undefined){ fbPaint(el, FB.thumbs[no]); return; }
+    FB.obs.observe(el);
+  });
+}
+
+function fbQueue(){
+  if (FB.timer) clearTimeout(FB.timer);
+  FB.timer = setTimeout(fbFlush, 180);
+}
+
+function fbFlush(){
+  FB.timer = null;
+  if (FB.busy || !FB.pend.length) return;
+  var batch = FB.pend.splice(0, 20);
+  FB.busy = true;
+
+  // 読み込み中の目印
+  batch.forEach(function(no){
+    var el = document.querySelector('[data-fbthumb="' + no + '"]');
+    if (el) el.innerHTML = '<span class="fb-ph"><span class="spin"></span></span>';
+  });
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      FB.busy = false;
+      var map = (d && d.map) || {};
+      batch.forEach(function(no){
+        var url = map[no] || '';
+        FB.thumbs[no] = url;
+        var el = document.querySelector('[data-fbthumb="' + no + '"]');
+        if (el) fbPaint(el, url);
+      });
+      if (FB.pend.length) fbQueue();
+    })
+    .withFailureHandler(function(e){
+      FB.busy = false;
+      batch.forEach(function(no){
+        var el = document.querySelector('[data-fbthumb="' + no + '"]');
+        if (el) el.innerHTML = '<span class="fb-ph">—</span>';
+      });
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); }
+    })
+    .apiGetThumbs(S.token, batch);
+}
+
+// 一覧のサムネイルをクリックしたとき、大きく出す
+function fbZoom(no){
+  var url = FB.thumbs[no];
+  if (!url) return;
+  fbEl('fbvTitle').textContent = '🖼 ' + no + ' の写真';
+  fbEl('fbvBody').innerHTML = '<img src="' + url + '" alt="">';
+  FB.viewUrl = url; FB.viewName = no + '.jpg';
+  fbEl('fbvOv').classList.add('on');
+}
+
+/* ---------- 書類ボックス ---------- */
+
+function fbOpenDocs(no, name){
+  FB.no = String(no || ''); FB.name = String(name || '');
+  FB.files = [];
+  fbEl('fbTitle').textContent = '📎 ' + FB.no + ' の書類ボックス';
+  fbEl('fbSub').textContent   = FB.name;
+  fbEl('fbBody').innerHTML =
+    '<p class="sub" style="text-align:center;padding:30px 0">'
+    + '<span class="spin"></span>📥 読み込み中…</p>';
+  fbEl('fbOv').classList.add('on');
+  fbLoadList();
+}
+
+function fbOpenDocsFromDlg(){
+  if (!FB.dlgNo) return;
+  fbOpenDocs(FB.dlgNo, FB.dlgName);
+}
+
+function fbCloseDocs(){ fbEl('fbOv').classList.remove('on'); }
+
+function fbLoadList(){
+  google.script.run
+    .withSuccessHandler(function(d){
+      FB.files = d.files || [];
+      FB.kinds = d.kinds || [];
+      fbRenderDocs();
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){
+        fbCloseDocs(); clrTk(); show('vPw'); return;
+      }
+      fbEl('fbBody').innerHTML = '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiListFiles(S.token, FB.no);
+}
+
+function fbRenderDocs(){
+  var kinds = FB.kinds.length ? FB.kinds
+            : ['取説','添付文書','機器写真','点検記録','修理報告','その他'];
+
+  var h = '<div class="fb-up"><div class="row">'
+        + '<select id="fbKind">'
+        + kinds.map(function(k){ return '<option>' + esc(k) + '</option>'; }).join('')
+        + '</select>'
+        + '<button type="button" class="btn-sub btn-sm" onclick="fbPickUpload()">'
+        + '⬆️ ファイルを追加</button>'
+        + '<span class="sub" id="fbUpMsg"></span>'
+        + '</div>'
+        + '<div class="fb-note">📐 写真は自動で ' + FB_UP_SIDE + 'px に縮めて入れます。'
+        + '　📄 PDFなどはそのまま（1ファイル12MBまで）。</div>'
+        + '</div>';
+
+  if (!FB.files.length){
+    h += '<p class="sub" style="text-align:center;padding:18px 0">'
+       + '🗒 この機器の書類はまだありません。</p>';
+  } else {
+    var lastKind = '';
+    FB.files.forEach(function(f, i){
+      if (f.kind !== lastKind){ h += '<div class="fb-kind">' + esc(f.kind) + '</div>';
+                                lastKind = f.kind; }
+      var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
+      h += '<div class="fb-row">'
+         +   '<button type="button" class="fb-hit" onclick="fbOpenFile(' + i + ')">'
+         +     '<span class="fb-ic">' + ic + '</span>'
+         +     '<span class="fb-tx"><span class="fb-nm">' + esc(f.name) + '</span>'
+         +       '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span>'
+         +     '</span>'
+         +   '</button>'
+         +   '<span class="fb-ops">'
+         +     (f.isImage
+                ? '<button type="button" title="代表写真にする" '
+                  + 'onclick="fbThumbFrom(' + i + ')">⭐</button>'
+                : '')
+         +     '<button type="button" title="名前を変える" '
+         +       'onclick="fbRename(' + i + ')">✏️</button>'
+         +     '<button type="button" title="削除（ゴミ箱へ）" '
+         +       'onclick="fbDelete(' + i + ')">🗑</button>'
+         +   '</span>'
+         + '</div>';
+    });
+  }
+  fbEl('fbBody').innerHTML = h;
+}
+
+/* ---------- 書類を開く ---------- */
+
+function fbOpenFile(idx){
+  var f = FB.files[idx];
+  if (!f) return;
+  if (f.tooBig){ msg('⚠️ ' + f.name + ' は大きすぎて開けません（' + f.sizeText + '）', true);
+                 return; }
+
+  fbEl('fbvTitle').textContent = f.name;
+  fbEl('fbvBody').innerHTML =
+    '<p class="sub" style="text-align:center;padding:30px 0">'
+    + '<span class="spin"></span>📥 読み込み中…</p>';
+  fbEl('fbvOv').classList.add('on');
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = 'data:' + d.mime + ';base64,' + d.data;
+      FB.viewUrl = url; FB.viewName = d.name;
+      if (String(d.mime).indexOf('image/') === 0){
+        fbEl('fbvBody').innerHTML =
+          '<img src="' + url + '" alt="' + esc(d.name) + '">'
+          + '<button type="button" class="btn-sub" style="width:100%;margin-top:10px" '
+          + 'onclick="fbSave()">⬇️ この画像を保存</button>';
+      } else {
+        fbEl('fbvBody').innerHTML =
+          '<p class="sub" style="text-align:center;padding:16px 0">'
+          + '📄 この形式は画面では開けません。保存して確認してください。</p>'
+          + '<button type="button" class="btn-sub" style="width:100%" onclick="fbSave()">'
+          + '⬇️ ' + esc(d.name) + ' を保存</button>';
+      }
+    })
+    .withFailureHandler(function(e){
+      fbEl('fbvBody').innerHTML = '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiGetFile(S.token, f.id);
+}
+
+function fbSave(){
+  if (!FB.viewUrl) return;
+  var a = document.createElement('a');
+  a.href = FB.viewUrl;
+  a.download = FB.viewName || 'file';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function fbCloseView(){
+  fbEl('fbvOv').classList.remove('on');
+  fbEl('fbvBody').innerHTML = '';
+  FB.viewUrl = ''; FB.viewName = '';
+}
+
+/* ---------- 画像の縮小（EXIFの向きも直す） ---------- */
+
+function fbLoadImage(src, cb, ng){
+  // src は File か dataURL
+  if (typeof src !== 'string' && window.createImageBitmap){
+    try {
+      createImageBitmap(src, { imageOrientation: 'from-image' })
+        .then(function(bm){ cb(bm, bm.width, bm.height); })
+        .catch(function(){ fbLoadPlain(src, cb, ng); });
+      return;
+    } catch (e) { /* 下へ */ }
+  }
+  fbLoadPlain(src, cb, ng);
+}
+
+function fbLoadPlain(src, cb, ng){
+  var img = new Image();
+  var url = (typeof src === 'string') ? src : URL.createObjectURL(src);
+  img.onload = function(){
+    cb(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+    if (typeof src !== 'string') URL.revokeObjectURL(url);
+  };
+  img.onerror = function(){ if (ng) ng(new Error('画像を読めませんでした')); };
+  img.src = url;
+}
+
+// 返りは dataURL（image/jpeg）
+function fbShrink(src, maxSide, q, cb, ng){
+  fbLoadImage(src, function(im, w, h){
+    var sc = Math.min(1, maxSide / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+    var cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    var cx = cv.getContext('2d');
+    cx.fillStyle = '#fff'; cx.fillRect(0, 0, cw, ch);
+    cx.drawImage(im, 0, 0, cw, ch);
+    cb(cv.toDataURL('image/jpeg', q));
+  }, ng);
+}
+
+function fbSplit(dataUrl){
+  var m = String(dataUrl).match(/^data:([^;]+);base64,(.*)$/);
+  if (!m) throw new Error('画像の形式が読めませんでした');
+  return { mime: m[1], data: m[2] };
+}
+
+/* ---------- アップロード ---------- */
+
+function fbPickUpload(){ fbEl('fbUpInput').click(); }
+
+function fbOnUpload(input){
+  var list = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  if (!list.length) return;
+  var kind = (fbEl('fbKind') || {}).value || 'その他';
+  fbUpNext(list, kind, 0, list.length);
+}
+
+function fbUpNext(list, kind, done, total){
+  var note = fbEl('fbUpMsg');
+  if (!list.length){
+    if (note) note.innerHTML = '';
+    msg('🎉 ' + total + ' 件をアップロードしました');
+    fbLoadList();
+    // 代表写真が未設定なら、見た目を合わせるためダイアログ側も読み直す
+    if (FB.dlgNo === FB.no) fbLoadDlgThumb();
+    return;
+  }
+  var file = list.shift();
+  if (note) note.innerHTML = '<span class="spin"></span>'
+    + esc(file.name) + '（' + (done + 1) + '/' + total + '）';
+
+  var ng = function(m){
+    if (note) note.innerHTML = '';
+    msg(m, true);
+    fbLoadList();
+  };
+
+  // dataUrl を受け取って送るところは画像・それ以外で共通
+  var send = function(dataUrl, name){
+    var p;
+    try { p = fbSplit(dataUrl); }
+    catch (e){ ng(file.name + '：' + e.message); return; }
+    google.script.run
+      .withSuccessHandler(function(){ fbUpNext(list, kind, done + 1, total); })
+      .withFailureHandler(function(e){ ng(file.name + '：' + e.message); })
+      .apiUploadFile(S.token, {
+        kanriNo: FB.no, kind: kind, name: name, mime: p.mime, data: p.data
+      });
+  };
+
+  if (String(file.type).indexOf('image/') === 0){
+    // 縮めたものは jpeg になるので拡張子も合わせる
+    var nm = file.name.replace(/\.(png|heic|heif|webp|bmp|tiff?)$/i, '.jpg');
+    fbShrink(file, FB_UP_SIDE, FB_UP_Q,
+      function(url){ send(url, nm); },
+      function(){ ng(file.name + ' を読めませんでした'); });
+  } else {
+    var fr = new FileReader();
+    fr.onload  = function(){ send(String(fr.result), file.name); };
+    fr.onerror = function(){ ng(file.name + ' を読めませんでした'); };
+    fr.readAsDataURL(file);
+  }
+}
+
+/* ---------- 名前を変える・消す ---------- */
+
+function fbRename(idx){
+  var f = FB.files[idx];
+  if (!f) return;
+  var n = prompt('✏️ 新しいファイル名', f.name);
+  if (n === null) return;
+  n = String(n).trim();
+  if (!n) return;
+  google.script.run
+    .withSuccessHandler(function(){ msg('✏️ 名前を変えました'); fbLoadList(); })
+    .withFailureHandler(function(e){ msg('⚠️ ' + e.message, true); })
+    .apiRenameFile(S.token, f.id, f.kind, n);
+}
+
+function fbDelete(idx){
+  var f = FB.files[idx];
+  if (!f) return;
+  if (!confirm('🗑 ' + f.name + ' を削除します。よろしいですか？\n\n'
+             + '♻️ ドライブのゴミ箱に入るので、しばらくは戻せます。')) return;
+  google.script.run
+    .withSuccessHandler(function(){ msg('🗑 削除しました'); fbLoadList(); })
+    .withFailureHandler(function(e){ msg('⚠️ ' + e.message, true); })
+    .apiDeleteFile(S.token, f.id);
+}
+
+/* ---------- 代表写真（サムネイル） ---------- */
+
+function fbLoadDlgThumb(){
+  var box = fbEl('fbDlgThumb');
+  if (!box || !FB.dlgNo) return;
+  var no = FB.dlgNo;
+
+  if (FB.thumbs[no] !== undefined){ fbPaintDlg(FB.thumbs[no]); return; }
+  box.innerHTML = '<span class="fb-ph"><span class="spin"></span></span>';
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = (d && d.ok) ? d.dataUrl : '';
+      FB.thumbs[no] = url;
+      if (FB.dlgNo === no) fbPaintDlg(url);
+    })
+    .withFailureHandler(function(){ if (FB.dlgNo === no) fbPaintDlg(''); })
+    .apiGetThumb(S.token, no);
+}
+
+function fbPaintDlg(url){
+  var box = fbEl('fbDlgThumb');
+  if (!box) return;
+  box.innerHTML = url
+    ? '<img src="' + url + '" alt="" title="クリックで拡大" '
+      + 'onclick="fbZoom(\'' + esc(FB.dlgNo) + '\')">'
+    : '<span class="fb-ph">📷 写真なし</span>';
+}
+
+function fbPickThumb(){
+  if (!FB.dlgNo){ msg('💾 先に機器を保存してください', true); return; }
+  fbEl('fbThumbInput').click();
+}
+
+function fbOnThumbPick(input){
+  var file = (input.files || [])[0];
+  input.value = '';
+  if (!file) return;
+  if (String(file.type).indexOf('image/') !== 0){
+    msg('🖼 画像ファイルを選んでください', true); return;
+  }
+  var box = fbEl('fbDlgThumb');
+  if (box) box.innerHTML = '<span class="fb-ph"><span class="spin"></span></span>';
+  fbShrink(file, FB_THUMB_SIDE, FB_THUMB_Q, function(url){
+    fbSendThumb(FB.dlgNo, url);
+  }, function(){ msg('⚠️ 画像を読めませんでした', true);
+                 fbPaintDlg(FB.thumbs[FB.dlgNo] || ''); });
+}
+
+// 書類一覧の ⭐ から。サーバの画像を取って縮めて貼る
+function fbThumbFrom(idx){
+  var f = FB.files[idx];
+  if (!f || !f.isImage) return;
+  if (f.tooBig){ msg('⚠️ この画像は大きすぎて使えません（' + f.sizeText + '）', true); return; }
+  msg('⭐ 代表写真にしています…');
+  google.script.run
+    .withSuccessHandler(function(d){
+      fbShrink('data:' + d.mime + ';base64,' + d.data, FB_THUMB_SIDE, FB_THUMB_Q,
+        function(url){ fbSendThumb(FB.no, url); },
+        function(){ msg('⚠️ 画像を読めませんでした', true); });
+    })
+    .withFailureHandler(function(e){ msg('⚠️ ' + e.message, true); })
+    .apiGetFile(S.token, f.id);
+}
+
+function fbSendThumb(no, dataUrl){
+  var p;
+  try { p = fbSplit(dataUrl); }
+  catch (e){ msg(e.message, true); return; }
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      FB.thumbs[no] = (r && r.dataUrl) ? r.dataUrl : dataUrl;
+      if (FB.dlgNo === no) fbPaintDlg(FB.thumbs[no]);
+      var cell = document.querySelector('[data-fbthumb="' + no + '"]');
+      if (cell) fbPaint(cell, FB.thumbs[no]);
+      msg('⭐ ' + no + ' の代表写真を設定しました');
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      msg('⚠️ ' + e.message, true);
+      if (FB.dlgNo === no) fbPaintDlg(FB.thumbs[no] || '');
+    })
+    .apiSetThumb(S.token, { kanriNo: no, mime: p.mime, data: p.data });
+}
+
+function fbClearThumbNow(){
+  var no = FB.dlgNo;
+  if (!no) return;
+  if (!FB.thumbs[no]){ msg('📷 代表写真はまだ設定されていません', true); return; }
+  if (!confirm('🗑 ' + no + ' の代表写真を外します。よろしいですか？\n\n'
+             + '📎 書類ボックスの写真は消えません。')) return;
+  google.script.run
+    .withSuccessHandler(function(){
+      FB.thumbs[no] = '';
+      if (FB.dlgNo === no) fbPaintDlg('');
+      var cell = document.querySelector('[data-fbthumb="' + no + '"]');
+      if (cell) fbPaint(cell, '');
+      msg('🗑 代表写真を外しました');
+    })
+    .withFailureHandler(function(e){ msg('⚠️ ' + e.message, true); })
+    .apiClearThumb(S.token, no);
+}
+</script>

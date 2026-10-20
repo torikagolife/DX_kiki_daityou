@@ -1,0 +1,106 @@
+<style>
+:root{
+  --bg:#f4f8f8; --card:#fff; --line:#dfe9ea; --ink:#1d2b2e; --sub:#6b8286;
+  --accent:#1f7f88; --accent-weak:#e2f2f3; --warn:#c2621f; --warn-weak:#fdefe2;
+  --radius:12px;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  font-size:15px;line-height:1.6}
+.wrap{max-width:900px;margin:0 auto;padding:16px 14px 80px}
+.hd{display:flex;align-items:baseline;gap:8px;margin:4px 0 14px}
+.hd h1{font-size:18px;margin:0;font-weight:700}
+.hd span{font-size:12px;color:var(--sub)}
+
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.tab{background:var(--card);color:var(--sub);border:1px solid var(--line);
+  padding:9px 16px;font-size:14px;border-radius:999px;cursor:pointer;font-weight:700}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.bar input[type=text]{flex:1;min-width:160px;padding:9px 12px;border:1px solid var(--line);
+  border-radius:9px;font-size:15px;font-family:inherit}
+.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--sub);cursor:pointer}
+.cnt{font-size:13px;color:var(--sub);margin-left:auto}
+
+button{font-family:inherit;font-size:15px;border-radius:9px;border:0;padding:9px 16px;
+  cursor:pointer;font-weight:700}
+.btn{background:var(--accent);color:#fff}
+.btn-sub{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+.btn-sm{padding:5px 12px;font-size:13px}
+.btn-off{background:#fff;color:var(--warn);border:1px solid var(--warn)}
+
+table{width:100%;border-collapse:collapse;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+th,td{padding:10px 12px;text-align:left;font-size:14px;border-bottom:1px solid var(--line)}
+th{background:var(--accent-weak);color:var(--accent);font-size:12px;font-weight:700;
+  white-space:nowrap}
+tr:last-child td{border-bottom:0}
+tr.off td{opacity:.45}
+td.act{width:1%;white-space:nowrap}
+td.act button{margin-left:6px}
+.tblwrap{overflow-x:auto;border-radius:var(--radius)}
+
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;
+  align-items:flex-start;justify-content:center;z-index:30;padding:20px;overflow-y:auto}
+.ov.on{display:flex}
+.dlg{background:var(--card);border-radius:14px;padding:20px;width:100%;max-width:460px;
+  margin:auto}
+.dlg h2{font-size:16px;margin:0 0 14px}
+.fld{margin-bottom:12px}
+.fld label{display:block;font-size:12px;color:var(--sub);margin-bottom:4px}
+.fld input,.fld select{width:100%;padding:10px 12px;border:1px solid var(--line);
+  border-radius:9px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink)}
+.fld input:focus,.fld select:focus{outline:2px solid var(--accent);border-color:transparent}
+.fld .req{color:var(--warn);font-weight:700;margin-left:3px}
+.dlg .row{display:flex;gap:8px;margin-top:16px}
+.dlg .row button{flex:1}
+
+.msg{padding:10px 12px;border-radius:9px;font-size:14px;margin-bottom:12px}
+.msg.err{background:var(--warn-weak);color:var(--warn)}
+.msg.ok{background:var(--accent-weak);color:var(--accent)}
+.hide{display:none!important}
+.sub{font-size:12px;color:var(--sub)}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;
+  vertical-align:-3px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101819; --card:#172124; --line:#2b393d; --ink:#e6eef0; --sub:#93a6aa;
+    --accent:#6fc0c8; --accent-weak:#1c3134; --warn:#e9a06a; --warn-weak:#33261c;
+  }
+  :root:not([data-theme="light"]) input,
+  :root:not([data-theme="light"]) select{background:#0e1618;color:var(--ink)}
+  :root:not([data-theme="light"]) .btn{color:#0e1618}
+  :root:not([data-theme="light"]) .btn-sub,
+  :root:not([data-theme="light"]) .btn-off{background:transparent}
+}
+/* ---- マスタ一覧のステータス色（機器マスタ用） ---- */
+tr.st-trouble{background:#f5c89a}
+tr.st-repair {background:#f3d99a}
+tr.st-lend   {background:#c9dcf0}
+tr.st-retired{background:#e4e8e9;opacity:.55}
+tr.st-trouble td:first-child{box-shadow:inset 5px 0 0 #c2621f}
+tr.st-repair  td:first-child{box-shadow:inset 5px 0 0 #b8860b}
+tr.st-lend    td:first-child{box-shadow:inset 5px 0 0 #2b6cb0}
+tr.st-retired td:first-child{box-shadow:inset 5px 0 0 #8b9698}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;
+  font-weight:700;border:1px solid transparent;white-space:nowrap}
+.pill.ok{background:#d9f0e4;color:#166b48;border-color:#9fd4ba}
+.pill.ng{background:#fbdcc2;color:#8a3d08;border-color:#e8a877}
+.pill.rp{background:#fbeec2;color:#7a5a06;border-color:#e0c66b}
+.pill.ld{background:#d4e4f5;color:#1d4e82;border-color:#9bbfe0}
+.pill.gy{background:#dfe4e5;color:#5a6668;border-color:#b9c3c5}
+.btn-copy{background:#fff;color:#2b6cb0;border:1px solid #2b6cb0}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) tr.st-trouble{background:#4a3220}
+  :root:not([data-theme="light"]) tr.st-repair {background:#443a1c}
+  :root:not([data-theme="light"]) tr.st-lend   {background:#1f3348}
+  :root:not([data-theme="light"]) tr.st-retired{background:#222c2e}
+  :root:not([data-theme="light"]) .btn-copy{background:transparent}
+}
+</style>

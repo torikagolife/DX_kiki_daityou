@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('admincss'); ?>
+<style>
+/* =====================================================================
+   ワイドモニタ向けの調整
+   admincss.html は画面をまたいで使っているので、ここだけで上書きする。
+   固定幅ではなく min() にしてあるので、スクエアでも狭い画面でも破綻しない
+   ===================================================================== */
+.wrap{ max-width:min(1760px, 97vw); }
+
+/* 列が少ないマスタで表が左に寄らないように。多いときは横スクロール */
+#tbl{ min-width:100%; }
+
+/* 一覧は横に長い。左端は「写真と主キー」、右端は「操作ボタン」を貼り付けて、
+   どこまで横スクロールしても、どの行を触っているか分かるようにする。
+   貼り付けた列の left と背景色は adminjs.html の paintSticky_() が入れる */
+#tbl td.fb-thcol, #tbl td.key-col{ position:sticky; z-index:3; }
+#tbl thead th.fb-thcol, #tbl thead th.key-col{ position:sticky; z-index:7; }
+#tbl td.fb-thcol, #tbl thead th.fb-thcol{ left:0; }
+#tbl td.key-col, #tbl thead th.key-col{ white-space:nowrap; font-weight:600; }
+#tbl td.key-col{ box-shadow:7px 0 9px -7px rgba(0,0,0,.22); }
+#tbl thead th.key-col{ box-shadow:7px 0 9px -7px rgba(0,0,0,.22); }
+
+/* 操作ボタンを右端に貼り付けて、どこまでスクロールしても押せるようにする */
+#tbl td.act{
+  position:sticky; right:0; z-index:2;
+  white-space:nowrap; text-align:right;
+  box-shadow:-7px 0 9px -7px rgba(0,0,0,.22);
+}
+#tbl thead th:last-child{
+  position:sticky; right:0; z-index:6;
+  box-shadow:-7px 0 9px -7px rgba(0,0,0,.22);
+}
+
+/* 編集はいちばんよく押すので、塗りつぶしにして目立たせる */
+#tbl .btn-edit{
+  background:var(--accent,#1f7f88); color:#fff;
+  border:1px solid var(--accent,#1f7f88);
+}
+#tbl .btn-edit:hover{ opacity:.85; }
+
+/* 行のどこを押しても編集が開く。押せることが分かるように指の形にする */
+#tbl tbody tr[data-key]{ cursor:pointer; }
+#tbl tbody tr[data-key]:hover{
+  outline:2px solid var(--accent,#1f7f88); outline-offset:-2px;
+}
+
+@media (max-width:900px){
+  /* 狭いときは貼り付けをやめる。画面の多くが固定列で埋まってしまうので */
+  #tbl td.act, #tbl thead th:last-child,
+  #tbl td.fb-thcol, #tbl td.key-col,
+  #tbl thead th.fb-thcol, #tbl thead th.key-col{ position:static; box-shadow:none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <h1>⚙️ 医療機器DX台帳</h1><span>🗂 マスタ管理</span>
+  </div>
+  <?!= include('nav', { navUrl: navUrl, navNow: navNow }); ?>
+  <div id="msg" class="msg hide"></div>
+
+  <!-- ===== パスワード ===== -->
+  <div id="vPw" class="hide">
+    <div class="dlg" style="max-width:420px;margin:0">
+      <h2>🔑 管理パスワード</h2>
+      <div class="fld">
+        <input type="password" id="pw" autocomplete="off"
+               onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <button class="btn" id="btnPw" onclick="doLogin()" style="width:100%">🔓 開く</button>
+    </div>
+  </div>
+
+  <!-- ===== 本体 ===== -->
+  <div id="vMain" class="hide">
+    <div class="tabs" id="tabs"></div>
+
+    <div class="bar">
+      <input type="text" id="q" placeholder="🔍 キーワードで絞り込み" oninput="render()">
+      <label class="chk"><input type="checkbox" id="showOff" onchange="render()">
+        🚫 無効も表示</label>
+      <button class="btn" onclick="openDlg(null)">✨ 新規追加</button>
+      <span class="cnt" id="cnt"></span>
+    </div>
+
+    <div class="tblwrap"><table id="tbl"></table></div>
+  </div>
+
+</div>
+
+<!-- ===== 編集ダイアログ ===== -->
+<div class="ov" id="ov" onclick="if(event.target===this)closeDlg()">
+  <div class="dlg">
+    <h2 id="dlgTitle">✏️ 編集</h2>
+    <div id="dlgErr" class="msg err hide"></div>
+    <div id="dlgBody"></div>
+    <div class="row">
+      <button class="btn-sub" onclick="closeDlg()">↩️ やめる</button>
+      <button class="btn" id="btnSave" onclick="save()">💾 保存する</button>
+    </div>
+  </div>
+</div>
+
+<?!= include('adminjs'); ?>
+</body>
+</html>

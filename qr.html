@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('qrgen'); ?>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f4f8f8;color:#1d2b2e;
+  font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+.bar{background:#fff;border-bottom:1px solid #dfe9ea;padding:14px 18px;
+  position:sticky;top:0;z-index:5}
+.bar h1{font-size:17px;margin:0 0 10px}
+.ctrl{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.ctrl label{display:block;font-size:12px;color:#6b8286;margin-bottom:3px}
+select,input[type=text]{padding:8px 10px;border:1px solid #dfe9ea;border-radius:8px;
+  font-size:14px;font-family:inherit;min-width:150px;background:#fff;color:#1d2b2e}
+select.narrow{min-width:92px}
+button{font-family:inherit;font-size:14px;font-weight:700;border:0;border-radius:8px;
+  padding:9px 16px;cursor:pointer;background:#1f7f88;color:#fff;white-space:nowrap}
+button.sub{background:#fff;color:#1f7f88;border:1px solid #1f7f88}
+button:active{opacity:.75}
+.hint{font-size:12px;color:#6b8286;margin-top:8px;line-height:1.6}
+.count{font-size:13px;color:#6b8286;margin-left:auto;white-space:nowrap}
+.sheet{padding:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.sheet.c3{grid-template-columns:repeat(3,1fr)}
+.sheet.c4{grid-template-columns:repeat(4,1fr)}
+.lbl{background:#fff;border:1px solid #c9d6d8;border-radius:6px;padding:10px;
+  display:flex;gap:10px;align-items:center;break-inside:avoid;cursor:pointer}
+.lbl img{width:104px;height:104px;flex:0 0 104px;image-rendering:pixelated}
+.sheet.c3 .lbl img{width:84px;height:84px;flex-basis:84px}
+.sheet.c4 .lbl img{width:68px;height:68px;flex-basis:68px}
+.lbl .tx{min-width:0;flex:1}
+.lbl .no{font-size:17px;font-weight:700;letter-spacing:.5px;font-family:
+  ui-monospace,SFMono-Regular,Menlo,monospace}
+.sheet.c3 .lbl .no{font-size:15px}
+.sheet.c4 .lbl .no{font-size:13px}
+.lbl .nm{font-size:12px;line-height:1.3;margin-top:3px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sheet.c4 .lbl .nm{font-size:11px}
+.lbl .pl{font-size:11px;color:#6b8286;margin-top:3px;
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.empty{padding:40px;text-align:center;color:#6b8286;font-size:14px}
+
+/* タップで拡大（読み取りテスト用） */
+#zoom{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;
+  flex-direction:column;align-items:center;justify-content:center;z-index:50;padding:20px}
+#zoom img{width:min(80vw,80vh);height:auto;background:#fff;padding:16px;border-radius:8px;
+  image-rendering:pixelated}
+#zoom .zno{color:#fff;font-size:22px;font-weight:700;margin-top:16px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#zoom .zhint{color:#aaa;font-size:13px;margin-top:6px;text-align:center;line-height:1.6}
+
+@media print{
+  .bar,#zoom{display:none!important}
+  body{background:#fff}
+  .sheet{padding:0;gap:4mm;grid-template-columns:repeat(2,1fr)}
+  .sheet.c3{grid-template-columns:repeat(3,1fr)}
+  .sheet.c4{grid-template-columns:repeat(4,1fr)}
+  .lbl{border:1px dashed #999}
+  @page{size:A4;margin:10mm}
+}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>🏷 QRラベル印刷</h1>
+  <?!= include('nav', { navUrl: navUrl, navNow: navNow }); ?>
+  <div class="ctrl">
+    <div><label for="fSite">🏥 拠点</label><select id="fSite"></select></div>
+    <div><label for="fDept">🏢 部署</label><select id="fDept"></select></div>
+    <div><label for="fCat">🗂 機器区分</label><select id="fCat"></select></div>
+    <div><label for="fQ">🔍 管理番号・機器名</label>
+      <input type="text" id="fQ" placeholder="キーワードで絞り込み"></div>
+    <div><label for="fMode">📱 QRの中身</label>
+      <select id="fMode" class="narrow">
+        <option value="no">🏷 管理番号のみ</option>
+        <option value="url">🔗 点検画面のURL</option>
+      </select></div>
+    <div><label for="fCols">🧱 1行の枚数</label>
+      <select id="fCols" class="narrow">
+        <option value="2">2 枚</option>
+        <option value="3">3 枚</option>
+        <option value="4">4 枚</option>
+      </select></div>
+    <button class="sub" onclick="clearAll()">🧹 クリア</button>
+    <button onclick="window.print()">🖨 印刷</button>
+    <span class="count" id="cnt"></span>
+  </div>
+  <div class="hint">
+    💡 ラベルをクリックすると拡大表示します。読み取りテストはこの拡大画面を撮ってください。<br>
+    🔗「点検画面のURL」にすると、スマホのカメラアプリで読むだけで点検画面が開きます。
+    🏷「管理番号のみ」はQRの模様が粗くなるぶん、遠くからでも読めます。
+  </div>
+</div>
+
+<div class="sheet" id="sheet"></div>
+
+<div id="zoom" onclick="closeZoom()">
+  <img id="zimg" alt="">
+  <div class="zno" id="zno"></div>
+  <div class="zhint" id="zhint">👆 タップで閉じる</div>
+</div>
+
+<script>
+var DATA    = null;
+var APP_URL = <?!= JSON.stringify(navUrl) ?>;
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ---------- QRの中身 ---------- */
+// 「管理番号のみ」なら A1403、「URL」なら https://…/exec?id=A1403
+function qrText(kanriNo){
+  if (document.getElementById('fMode').value === 'url'){
+    return APP_URL + '?id=' + encodeURIComponent(kanriNo);
+  }
+  return String(kanriNo);
+}
+
+function qrSrc(text, cell){
+  try{
+    var qr = qrcode(0, 'M');
+    qr.addData(String(text));
+    qr.make();
+    return qr.createDataURL(cell || 6, 2);
+  }catch(e){ return ''; }
+}
+
+// URLは文字数が多いぶんマス目が細かくなるので、1マスを少し大きめに描く
+function cellSize(){
+  var cols = Number(document.getElementById('fCols').value || 2);
+  var base = (cols === 4) ? 4 : (cols === 3) ? 5 : 6;
+  return base;
+}
+
+/* ---------- 画面 ---------- */
+function fill(sel, arr, all){
+  sel.innerHTML = '<option value="">' + all + '</option>'
+    + arr.map(function(v){ return '<option>' + esc(v) + '</option>'; }).join('');
+  sel.onchange = render;
+}
+
+function clearAll(){
+  ['fSite','fDept','fCat'].forEach(function(id){
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('fQ').value = '';
+  render();
+}
+
+function remember(){
+  try{
+    localStorage.setItem('mkdx_qr_mode', document.getElementById('fMode').value);
+    localStorage.setItem('mkdx_qr_cols', document.getElementById('fCols').value);
+  }catch(e){}
+}
+
+function restore(){
+  try{
+    var m = localStorage.getItem('mkdx_qr_mode');
+    var c = localStorage.getItem('mkdx_qr_cols');
+    if (m) document.getElementById('fMode').value = m;
+    if (c) document.getElementById('fCols').value = c;
+  }catch(e){}
+}
+
+function openZoom(no){
+  var mode = document.getElementById('fMode').value;
+  document.getElementById('zimg').src = qrSrc(qrText(no), mode === 'url' ? 8 : 12);
+  document.getElementById('zno').textContent = '🏷 ' + no;
+  document.getElementById('zhint').innerHTML = (mode === 'url'
+      ? '🔗 カメラアプリで読むと点検画面が開きます<br>'
+      : '🏷 管理番号だけが入っています<br>')
+    + '👆 タップで閉じる';
+  document.getElementById('zoom').style.display = 'flex';
+}
+function closeZoom(){ document.getElementById('zoom').style.display = 'none'; }
+
+function render(){
+  if (!DATA) return;
+  remember();
+
+  var site = document.getElementById('fSite').value;
+  var dept = document.getElementById('fDept').value;
+  var cat  = document.getElementById('fCat').value;
+  var q    = document.getElementById('fQ').value.trim().toUpperCase();
+
+  var list = DATA.devices.filter(function(d){
+    if (site && d.site !== site) return false;
+    if (dept && d.dept !== dept) return false;
+    if (cat  && d.category !== cat) return false;
+    if (q && (d.kanriNo + ' ' + d.name).toUpperCase().indexOf(q) < 0) return false;
+    return true;
+  });
+
+  document.getElementById('cnt').textContent =
+    '📄 ' + list.length + ' / ' + DATA.devices.length + ' 枚';
+
+  var cols  = Number(document.getElementById('fCols').value || 2);
+  var sheet = document.getElementById('sheet');
+  sheet.className = 'sheet' + (cols === 3 ? ' c3' : cols === 4 ? ' c4' : '');
+  sheet.innerHTML = '';
+
+  if (!list.length){
+    sheet.innerHTML = '<div class="empty" style="grid-column:1/-1">'
+                    + '🔍 該当なし</div>';
+    return;
+  }
+
+  var cell = cellSize();
+  list.forEach(function(d){
+    var el = document.createElement('div');
+    el.className = 'lbl';
+    el.onclick = function(){ openZoom(d.kanriNo); };
+    el.innerHTML =
+        '<img src="' + qrSrc(qrText(d.kanriNo), cell) + '" alt="">'
+      + '<div class="tx">'
+      +   '<div class="no">' + esc(d.kanriNo) + '</div>'
+      +   '<div class="nm">' + esc(d.name) + '</div>'
+      +   '<div class="pl">🏢 ' + esc(d.dept) + ' / 📍 ' + esc(d.loc) + '</div>'
+      + '</div>';
+    sheet.appendChild(el);
+  });
+}
+
+document.getElementById('fQ').addEventListener('input', render);
+document.getElementById('fMode').addEventListener('change', render);
+document.getElementById('fCols').addEventListener('change', render);
+
+window.addEventListener('DOMContentLoaded', function(){
+  restore();
+
+  var tk = '';
+  try{ tk = localStorage.getItem('mkdx_admin_tk') || ''; }catch(e){}
+
+  var go = function(token){
+    document.getElementById('sheet').innerHTML =
+      '<div class="empty" style="grid-column:1/-1">📥 読み込み中…</div>';
+    google.script.run
+      .withSuccessHandler(function(d){
+        DATA = d;
+        fill(document.getElementById('fSite'), d.sites, '🏥 すべての拠点');
+        fill(document.getElementById('fDept'), d.depts, '🏢 すべての部署');
+        fill(document.getElementById('fCat'),  d.cats,  '🗂 すべての区分');
+        render();
+      })
+      .withFailureHandler(function(e){
+        try{ localStorage.removeItem('mkdx_admin_tk'); }catch(x){}
+        ask();
+      })
+      .apiGetQrLabels(token);
+  };
+
+  var ask = function(){
+    var pw = prompt('🔑 管理パスワードを入力してください');
+    if (!pw) {
+      document.body.innerHTML =
+        '<p style="padding:30px;font-size:14px">🔒 閉じました。'
+        + '<a href="' + APP_URL + '">🔧 点検画面へ戻る</a></p>';
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(function(r){
+        if (!r.ok){ alert('🙅 パスワードが違います'); ask(); return; }
+        try{ localStorage.setItem('mkdx_admin_tk', r.token); }catch(e){}
+        go(r.token);
+      })
+      .withFailureHandler(function(e){ alert('⚠️ ' + e.message); })
+      .verifyPassword(pw, 'admin');
+  };
+
+  if (tk) go(tk); else ask();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1166 @@
+<script>
+var S    = { token:'', ctx:null, allUsers:false, editHid:'', editKind:'', last:null,
+             files:[], photos:[] };
+var MODE = 'inspect';
+var DBG  = [];
+var SCAN_URL = 'https://torikagolife.github.io/dx-qr/';
+var MAX_PHOTO_SIDE = 1600;
+var PHOTO_QUALITY  = 0.82;
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ---------- 画面切替 ---------- */
+function show(id){
+  ['vPw','vFind','vMain','vDone'].forEach(function(v){
+    document.getElementById(v).classList.toggle('hide', v !== id);
+  });
+  window.scrollTo(0,0);
+}
+function err(msg){
+  var e = document.getElementById('err');
+  e.textContent = '⚠️ ' + msg; e.classList.remove('hide');
+  window.scrollTo(0,0);
+  setTimeout(function(){ e.classList.add('hide'); }, 6000);
+}
+function busy(on, el){
+  if (!el) return;
+  el.disabled = on;
+  el.innerHTML = on ? '<span class="spin"></span>処理中…' : el.dataset.label;
+}
+function markLabels(root){
+  (root || document).querySelectorAll('button').forEach(function(b){
+    if (!b.dataset.label) b.dataset.label = b.innerHTML;
+  });
+}
+
+/* ---------- トークン ---------- */
+function saveToken(t){ S.token = t; try{ localStorage.setItem('mkdx_tk', t); }catch(e){} }
+function loadToken(){ try{ return localStorage.getItem('mkdx_tk') || ''; }catch(e){ return ''; } }
+function clearToken(){ S.token=''; try{ localStorage.removeItem('mkdx_tk'); }catch(e){} }
+
+/* ---------- 起動 ---------- */
+function initId_(){
+  var v = (typeof INIT_ID === 'string') ? INIT_ID.trim() : '';
+  v = v.replace(/^["']+|["']+$/g, '').trim();
+  if (!v || v === 'undefined' || v === 'null') return '';
+  // QRにURLを入れている場合、スキャンページから値ごと渡ってくることがある。
+  // handleScan と同じやり方で、中から管理番号だけを取り出す。
+  var m = v.match(/[?&]id=([^&#]+)/);
+  if (m) { try { v = decodeURIComponent(m[1]); } catch (e) { v = m[1]; } }
+  v = v.replace(/\s+/g, '').toUpperCase();
+  return v;
+}
+
+function afterAuth(){
+  var id = initId_();
+  if (id) { loadDevice(id, true); } else { show('vFind'); }
+}
+
+window.addEventListener('DOMContentLoaded', function(){
+  markLabels();
+  thumbCss_();
+  if (!qrReady()){
+    var bp = document.getElementById('btnPhoto');
+    if (bp) bp.classList.add('hide');
+  }
+  var t = loadToken();
+  if (!t) { show('vPw'); document.getElementById('pw').focus(); return; }
+  S.token = t;
+  google.script.run
+    .withSuccessHandler(function(ok){
+      if (!ok) { clearToken(); show('vPw'); return; }
+      afterAuth();
+    })
+    .withFailureHandler(function(){ clearToken(); show('vPw'); })
+    .pingToken(t, 'inspect');
+});
+
+/* ---------- PW ---------- */
+function doLogin(){
+  var el = document.getElementById('btnPw');
+  var pw = document.getElementById('pw').value;
+  if (!pw) { err('🔑 パスワードを入力してね'); return; }
+  busy(true, el);
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el);
+      if (!r.ok) { err('🙅 パスワードが違うみたい'); return; }
+      saveToken(r.token);
+      document.getElementById('pw').value = '';
+      afterAuth();
+    })
+    .withFailureHandler(function(e){ busy(false, el); err(e.message); })
+    .verifyPassword(pw, 'inspect');
+}
+
+/* ---------- QR ---------- */
+function qrReady(){ return typeof jsQR === 'function'; }
+
+function shootQr(){
+  try{ window.top.location.href = SCAN_URL; }
+  catch(e){ window.open(SCAN_URL, '_blank'); }
+}
+
+function shootPhoto(){
+  if (!qrReady()){ err('QRの読み取り機能が使えません'); return; }
+  document.getElementById('qrFile').click();
+}
+
+function onPhoto(input){
+  var f = input.files && input.files[0];
+  if (!f) return;
+  if (!qrReady()){ err('QRの読み取り機能が使えません'); input.value=''; return; }
+  DBG = [];
+  DBG.push('file ' + Math.round(f.size/1024) + 'KB ' + (f.type || 'type不明'));
+  var btn = document.getElementById('btnPhoto');
+  busy(true, btn);
+  var t0 = Date.now();
+  loadBitmap_(f).then(function(bmp){
+    input.value = '';
+    var w = bmp.width || bmp.naturalWidth || 0;
+    var h = bmp.height || bmp.naturalHeight || 0;
+    DBG.push('load ' + w + '×' + h + ' / ' + (Date.now()-t0) + 'ms');
+    var txt = decodeQr(bmp);
+    DBG.push('decode ' + (Date.now()-t0) + 'ms');
+    busy(false, btn);
+    if (txt) { handleScan(txt); }
+    else { showDbg('QRを読み取れませんでした'); }
+  }).catch(function(e){
+    input.value = '';
+    busy(false, btn);
+    DBG.push('load失敗 ' + (e && e.message ? e.message : e));
+    showDbg('画像を読み込めませんでした');
+  });
+}
+
+function showDbg(head){
+  var e = document.getElementById('err');
+  e.innerHTML = '⚠️ ' + esc(head)
+    + '<div style="font-size:11px;margin-top:8px;line-height:1.5;opacity:.85">'
+    + DBG.map(esc).join('<br>') + '</div>';
+  e.classList.remove('hide');
+  window.scrollTo(0,0);
+  show('vFind');
+}
+
+function decodeQr(img){
+  var c = document.getElementById('cv');
+  var ctx = c.getContext('2d', { willReadFrequently:true });
+  var iw = img.width || img.naturalWidth;
+  var ih = img.height || img.naturalHeight;
+  if (!iw || !ih){ DBG.push('サイズ取得できず'); return ''; }
+  var src = img;
+  var tries = [
+    { crop:1.00, dim:1400 }, { crop:1.00, dim:2000 },
+    { crop:0.70, dim:1400 }, { crop:0.50, dim:1400 },
+    { crop:0.35, dim:1200 }, { crop:0.22, dim:1000 }
+  ];
+  for (var i = 0; i < tries.length; i++){
+    var t  = tries[i];
+    var sw = Math.round(iw * t.crop);
+    var sh = Math.round(ih * t.crop);
+    var sx = Math.round((iw - sw) / 2);
+    var sy = Math.round((ih - sh) / 2);
+    var sc = Math.min(t.dim / Math.max(sw, sh), 5);
+    var w  = Math.max(1, Math.round(sw * sc));
+    var h  = Math.max(1, Math.round(sh * sc));
+    try{
+      c.width = w; c.height = h;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+    }catch(e){
+      DBG.push('描画失敗 crop' + t.crop + ' : ' + (e && e.message ? e.message : e));
+      continue;
+    }
+    var d;
+    try{ d = ctx.getImageData(0, 0, w, h); }
+    catch(e2){
+      DBG.push('読出失敗 crop' + t.crop + ' : ' + (e2 && e2.message ? e2.message : e2));
+      continue;
+    }
+    var p0 = d.data[0] + d.data[1] + d.data[2];
+    var pm = d.data[(w*h*2) + 0] + d.data[(w*h*2) + 1] + d.data[(w*h*2) + 2];
+    try{
+      var r = jsQR(d.data, w, h, { inversionAttempts:'attemptBoth' });
+      if (r && r.data){ DBG.push('crop' + t.crop + ' ' + w + '×' + h + ' → 成功'); return r.data; }
+      binarize_(d.data);
+      r = jsQR(d.data, w, h, { inversionAttempts:'attemptBoth' });
+      if (r && r.data){ DBG.push('crop' + t.crop + ' 二値化 → 成功'); return r.data; }
+      DBG.push('crop' + t.crop + ' ' + w + '×' + h + ' 不検出(画素 ' + p0 + '/' + pm + ')');
+    }catch(e3){
+      DBG.push('jsQR失敗 crop' + t.crop + ' : ' + (e3 && e3.message ? e3.message : e3));
+    }
+  }
+  return '';
+}
+
+function binarize_(data){
+  var n = data.length / 4, hist = new Uint32Array(256), i, g;
+  for (i = 0; i < n; i++){
+    g = (data[i*4]*299 + data[i*4+1]*587 + data[i*4+2]*114) / 1000 | 0;
+    data[i*4+3] = g;
+    hist[g]++;
+  }
+  var sum = 0;
+  for (i = 0; i < 256; i++) sum += i * hist[i];
+  var sumB = 0, wB = 0, best = -1, thr = 128;
+  for (i = 0; i < 256; i++){
+    wB += hist[i];
+    if (!wB) continue;
+    var wF = n - wB;
+    if (wF <= 0) break;
+    sumB += i * hist[i];
+    var mB = sumB / wB, mF = (sum - sumB) / wF;
+    var v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > best){ best = v; thr = i; }
+  }
+  for (i = 0; i < n; i++){
+    var val = data[i*4+3] > thr ? 255 : 0;
+    data[i*4] = val; data[i*4+1] = val; data[i*4+2] = val; data[i*4+3] = 255;
+  }
+}
+
+function loadBitmap_(file){
+  if (typeof createImageBitmap === 'function'){
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+      .catch(function(){ return legacyLoad_(file); });
+  }
+  return legacyLoad_(file);
+}
+
+function legacyLoad_(file){
+  return new Promise(function(resolve, reject){
+    var fr = new FileReader();
+    fr.onload = function(){
+      var buf = fr.result;
+      var ori = readOrientation_(buf);
+      var blob = new Blob([buf], { type: file.type || 'image/jpeg' });
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function(){
+        URL.revokeObjectURL(url);
+        resolve(ori > 1 ? rotateToCanvas_(img, ori) : img);
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(); };
+      img.src = url;
+    };
+    fr.onerror = reject;
+    fr.readAsArrayBuffer(file);
+  });
+}
+
+function readOrientation_(buf){
+  try{
+    var v = new DataView(buf);
+    if (v.getUint16(0, false) !== 0xFFD8) return 1;
+    var len = v.byteLength, off = 2;
+    while (off < len - 4){
+      if (v.getUint16(off, false) !== 0xFFE1){ off += 2 + v.getUint16(off + 2, false); continue; }
+      if (v.getUint32(off + 4, false) !== 0x45786966) return 1;
+      var tiff = off + 10;
+      var le = v.getUint16(tiff, false) === 0x4949;
+      var ifd = tiff + v.getUint32(tiff + 4, le);
+      var n = v.getUint16(ifd, le);
+      for (var i = 0; i < n; i++){
+        var e = ifd + 2 + i * 12;
+        if (v.getUint16(e, le) === 0x0112) return v.getUint16(e + 8, le);
+      }
+      return 1;
+    }
+  }catch(e){}
+  return 1;
+}
+
+function rotateToCanvas_(img, ori){
+  var w = img.width, h = img.height;
+  var swap = (ori >= 5 && ori <= 8);
+  var c = document.createElement('canvas');
+  c.width  = swap ? h : w;
+  c.height = swap ? w : h;
+  var x = c.getContext('2d');
+  switch (ori){
+    case 2: x.transform(-1, 0, 0, 1, w, 0); break;
+    case 3: x.transform(-1, 0, 0, -1, w, h); break;
+    case 4: x.transform(1, 0, 0, -1, 0, h); break;
+    case 5: x.transform(0, 1, 1, 0, 0, 0); break;
+    case 6: x.transform(0, 1, -1, 0, h, 0); break;
+    case 7: x.transform(0, -1, -1, 0, h, w); break;
+    case 8: x.transform(0, -1, 1, 0, 0, w); break;
+  }
+  x.drawImage(img, 0, 0);
+  return c;
+}
+
+function handleScan(text){
+  var v = String(text || '').trim();
+  var m = v.match(/[?&]id=([^&#]+)/);
+  if (m) v = decodeURIComponent(m[1]);
+  v = v.replace(/\s+/g, '').toUpperCase();
+  if (!v){ err('QRが空でした'); return; }
+  document.getElementById('kanri').value = v;
+  loadDevice(v);
+}
+
+/* ---------- 機器読み込み ---------- */
+function findByInput(){
+  var v = document.getElementById('kanri').value.trim();
+  if (!v) { err('🏷 管理番号を入力してね'); return; }
+  loadDevice(v);
+}
+
+function loadDevice(kanriNo, silent){
+  var key = String(kanriNo == null ? '' : kanriNo).trim();
+  if (!key){ show('vFind'); return; }
+
+  var el = document.getElementById('btnFind');
+  busy(true, el);
+  google.script.run
+    .withSuccessHandler(function(ctx){
+      busy(false, el);
+      S.ctx = ctx;
+      S.editHid = ''; S.editKind = '';
+      S.files = []; S.photos = [];
+      renderDevice();
+      show('vMain');
+      loadFileList();            // 書類の件数は裏で取りにいく
+    })
+    .withFailureHandler(function(e){
+      busy(false, el);
+      if (String(e.message).indexOf('AUTH') >= 0) { clearToken(); show('vPw'); return; }
+      show('vFind');
+      if (!silent) err(e.message);
+    })
+    .apiGetContext(S.token, key);
+}
+
+/* ---------- 機器カード ---------- */
+function renderDevice(){
+  var d = S.ctx.device;
+  document.getElementById('devName').textContent = d.name;
+  document.getElementById('devNo').textContent   = '🏷 ' + d.kanriNo;
+  var st = document.getElementById('devStatus');
+  st.textContent = (d.status === '稼働中' ? '✅ ' : '🔧 ') + d.status;
+  st.className = 'badge ' + (d.status === '稼働中' ? 'ok' : 'ng');
+
+  document.getElementById('devBody').innerHTML =
+      '<dt>🗂 機器区分</dt><dd>' + esc(d.category) + '</dd>'
+    + '<dt>🏭 メーカー</dt><dd>' + esc(d.maker) + ' 🔤 ' + esc(d.model) + '</dd>'
+    + '<dt>📍 設置場所</dt><dd>🏥 ' + esc(d.site) + ' 🏢 ' + esc(d.dept)
+    +   '<br>📦 ' + esc(d.loc) + '</dd>'
+    + '<dt>🗓 前回点検</dt><dd>'
+    +   (S.ctx.lastDate ? '✅ ' + S.ctx.lastDate : '🆕 まだ記録なし') + '</dd>';
+
+  renderUsers();
+  MODE = 'inspect';
+  renderTabs();
+  loadThumb();                 // 機器の写真は裏で取りにいく
+}
+
+/* =============================================================
+ *  機器の写真（代表写真／サムネイル）
+ *    管理画面の機器マスタで ⭐ を付けた1枚がここに出る。
+ *    inspect.html には手を入れず、機器カードの中に差し込む。
+ * ============================================================= */
+
+var THUMB = { no:'', url:'' };
+
+function thumbCss_(){
+  if (document.getElementById('thumbCss')) return;
+  var css = ''
+  + '#devThumbHost{margin:0 0 12px}'
+  + '#devThumbHost .th-box{width:100%;border-radius:12px;overflow:hidden;'
+  +   'background:rgba(0,0,0,.05);display:flex;align-items:center;justify-content:center;'
+  +   'min-height:52px}'
+  + '#devThumbHost img{width:100%;max-height:220px;object-fit:cover;display:block}'
+  + '#devThumbHost .th-ph{font-size:12px;opacity:.55;padding:10px 0}';
+  var st = document.createElement('style');
+  st.id = 'thumbCss';
+  st.type = 'text/css';
+  st.appendChild(document.createTextNode(css));
+  document.head.appendChild(st);
+}
+
+// 機器カード（devBody）のすぐ上に写真の置き場所を作る
+function thumbHost_(){
+  var host = document.getElementById('devThumbHost');
+  if (host) return host;
+  var body = document.getElementById('devBody');
+  if (!body || !body.parentNode) return null;
+  host = document.createElement('div');
+  host.id = 'devThumbHost';
+  host.className = 'hide';
+  body.parentNode.insertBefore(host, body);
+  return host;
+}
+
+function loadThumb(){
+  var host = thumbHost_();
+  if (!host || !S.ctx) return;
+  var no = S.ctx.device.kanriNo;
+
+  // 同じ機器を開き直したときは取り直さない
+  if (THUMB.no === no){ paintThumb_(THUMB.url); return; }
+
+  THUMB.no = no; THUMB.url = '';
+  host.className = '';
+  host.innerHTML = '<div class="th-box"><span class="th-ph">'
+                 + '<span class="spin"></span>📷 写真を読み込み中…</span></div>';
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      if (!S.ctx || S.ctx.device.kanriNo !== no) return;   // 別の機器に移っていた
+      THUMB.url = (d && d.ok) ? d.dataUrl : '';
+      paintThumb_(THUMB.url);
+    })
+    .withFailureHandler(function(){
+      if (!S.ctx || S.ctx.device.kanriNo !== no) return;
+      THUMB.url = '';
+      paintThumb_('');
+    })
+    .apiGetThumb(S.token, no);
+}
+
+function paintThumb_(url){
+  var host = document.getElementById('devThumbHost');
+  if (!host) return;
+  if (!url){                       // 写真が無ければ場所ごと消す
+    host.className = 'hide';
+    host.innerHTML = '';
+    return;
+  }
+  host.className = '';
+  host.innerHTML = '<div class="th-box">'
+                 + '<img src="' + url + '" alt="機器の写真" onclick="openThumb()">'
+                 + '</div>';
+}
+
+// タップで大きく見る（書類ビューアを使い回す）
+function openThumb(){
+  if (!THUMB.url) return;
+  document.getElementById('viewTitle').textContent = '🖼 ' + THUMB.no + ' の写真';
+  document.getElementById('viewBody').innerHTML =
+    '<img src="' + THUMB.url + '" alt="">';
+  S.viewUrl = THUMB.url;
+  S.viewName = THUMB.no + '.jpg';
+  document.getElementById('ovView').classList.add('on');
+}
+
+/* ---------- 実施者 ---------- */
+function renderUsers(){
+  var sel  = document.getElementById('user');
+  var list = S.ctx.users.filter(function(u){ return S.allUsers || u.mine; });
+  if (!list.length) { S.allUsers = true; list = S.ctx.users; }
+
+  var saved = '';
+  try { saved = localStorage.getItem('mkdx_user') || ''; } catch(e){}
+
+  sel.innerHTML = '<option value="">👇 選択してください</option>'
+    + list.map(function(u){
+        return '<option value="' + esc(u.id) + '"' + (u.id === saved ? ' selected' : '') + '>'
+             + esc(u.name) + '（' + esc(u.dept) + '）</option>';
+      }).join('');
+
+  document.getElementById('btnAllUsers').textContent =
+    S.allUsers ? '🙋 自部署のみ表示' : '👥 他部署の職員も表示';
+}
+
+function toggleUsers(){ S.allUsers = !S.allUsers; renderUsers(); }
+
+function rememberUser(){
+  var v = document.getElementById('user').value;
+  try { if (v) localStorage.setItem('mkdx_user', v); } catch(e){}
+}
+
+function setUser(id){
+  var sel = document.getElementById('user');
+  for (var i=0; i<sel.options.length; i++){
+    if (sel.options[i].value === String(id)){ sel.selectedIndex = i; return; }
+  }
+  if (!S.allUsers){ S.allUsers = true; renderUsers(); setUser(id); }
+}
+
+/* =============================================================
+ *  書類（ファイルBOX）
+ * ============================================================= */
+
+// 機器を開いた直後に裏で呼ぶ。画面表示は待たせない
+function loadFileList(){
+  var btn = document.getElementById('btnDocs');
+  if (!btn || !S.ctx) return;
+  btn.innerHTML = '📎 書類を読み込み中<span class="spin" style="margin-left:6px"></span>';
+  google.script.run
+    .withSuccessHandler(function(d){
+      S.files = d.files || [];
+      S.kinds = d.kinds || [];
+      updateDocsBtn();
+    })
+    .withFailureHandler(function(){
+      S.files = [];
+      btn.innerHTML = '📎 書類を見る';
+    })
+    .apiListFiles(S.token, S.ctx.device.kanriNo);
+}
+
+function updateDocsBtn(){
+  var btn = document.getElementById('btnDocs');
+  if (!btn) return;
+  btn.innerHTML = S.files.length
+    ? '📎 書類を見る（' + S.files.length + ' 件）'
+    : '📎 書類を見る（🗒 まだありません）';
+  btn.dataset.label = btn.innerHTML;
+}
+
+function openDocs(){
+  if (!S.ctx) return;
+  renderDocs();
+  document.getElementById('ovDocs').classList.add('on');
+}
+
+function closeDocs(){
+  document.getElementById('ovDocs').classList.remove('on');
+}
+
+function renderDocs(){
+  var box = document.getElementById('docsBody');
+  if (!S.files.length){
+    box.innerHTML = '<p class="sub center" style="padding:24px 0">'
+      + '🗒 この機器の書類はまだ登録されていません。</p>';
+    return;
+  }
+  var h = '', lastKind = '';
+  S.files.forEach(function(f, i){
+    if (f.kind !== lastKind){
+      h += '<div class="doc-kind">' + esc(f.kind) + '</div>';
+      lastKind = f.kind;
+    }
+    var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
+    h += '<button type="button" class="doc-row" onclick="openFile(' + i + ')">'
+       +   '<span class="doc-ic">' + ic + '</span>'
+       +   '<span class="doc-tx">'
+       +     '<span class="doc-nm">' + esc(f.name) + '</span>'
+       +     '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span>'
+       +   '</span>'
+       + '</button>';
+  });
+  box.innerHTML = h;
+}
+
+function openFile(idx){
+  var f = S.files[idx];
+  if (!f) return;
+  if (f.tooBig){
+    err(f.name + ' は大きすぎて開けません（' + f.sizeText + '）');
+    return;
+  }
+  document.getElementById('viewTitle').textContent = f.name;
+  document.getElementById('viewBody').innerHTML =
+    '<p class="sub center" style="padding:30px 0"><span class="spin"></span>📥 読み込み中…</p>';
+  document.getElementById('ovView').classList.add('on');
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = 'data:' + d.mime + ';base64,' + d.data;
+      if (String(d.mime).indexOf('image/') === 0){
+        document.getElementById('viewBody').innerHTML =
+          '<img src="' + url + '" alt="' + esc(d.name) + '">'
+          + '<button class="btn-sub" style="margin-top:10px" onclick="saveFile(\''
+          + esc(d.name) + '\')">⬇️ この画像を保存</button>';
+        S.viewUrl = url; S.viewName = d.name;
+      } else {
+        S.viewUrl = url; S.viewName = d.name;
+        document.getElementById('viewBody').innerHTML =
+          '<p class="sub center" style="padding:20px 0">'
+          + '📄 この形式は画面では開けません。保存して確認してください。</p>'
+          + '<button class="btn" onclick="saveFile(\'' + esc(d.name) + '\')">'
+          + '⬇️ ' + esc(d.name) + ' を保存</button>';
+      }
+    })
+    .withFailureHandler(function(e){
+      document.getElementById('viewBody').innerHTML =
+        '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiGetFile(S.token, f.id);
+}
+
+function saveFile(name){
+  if (!S.viewUrl) return;
+  var a = document.createElement('a');
+  a.href = S.viewUrl;
+  a.download = name || S.viewName || 'file';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function closeView(){
+  document.getElementById('ovView').classList.remove('on');
+  document.getElementById('viewBody').innerHTML = '';
+  S.viewUrl = ''; S.viewName = '';
+}
+
+/* ---------- 故障報告に添える写真 ---------- */
+function pickPhoto(){ document.getElementById('photoFile').click(); }
+
+function onPickPhoto(input){
+  var files = input.files;
+  if (!files || !files.length) return;
+  var btn = document.getElementById('btnPickPhoto');
+  busy(true, btn);
+
+  var jobs = [];
+  for (var i = 0; i < files.length; i++) jobs.push(shrinkPhoto_(files[i]));
+
+  Promise.all(jobs).then(function(list){
+    input.value = '';
+    busy(false, btn);
+    list.forEach(function(p){ if (p) S.photos.push(p); });
+    renderPhotos();
+  }).catch(function(e){
+    input.value = '';
+    busy(false, btn);
+    err('📷 写真を読み込めませんでした' + (e && e.message ? '（' + e.message + '）' : ''));
+  });
+}
+
+// 長辺1600pxのJPEGに縮めてから送る（そのままだと1枚数MBで重い）
+function shrinkPhoto_(file){
+  return loadBitmap_(file).then(function(bmp){
+    var w0 = bmp.width || bmp.naturalWidth;
+    var h0 = bmp.height || bmp.naturalHeight;
+    if (!w0 || !h0) return null;
+    var sc = Math.min(1, MAX_PHOTO_SIDE / Math.max(w0, h0));
+    var w = Math.round(w0 * sc), h = Math.round(h0 * sc);
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    var dataUrl = c.toDataURL('image/jpeg', PHOTO_QUALITY);
+    var b64 = dataUrl.split(',')[1];
+    return {
+      name: (file.name || 'photo.jpg').replace(/\.[^.]+$/, '') + '.jpg',
+      mime: 'image/jpeg',
+      data: b64,
+      thumb: dataUrl,
+      size: Math.round(b64.length * 3 / 4)
+    };
+  });
+}
+
+function renderPhotos(){
+  var box = document.getElementById('photoList');
+  if (!box) return;
+  if (!S.photos.length){ box.innerHTML = ''; return; }
+  box.innerHTML = S.photos.map(function(p, i){
+    return '<div class="thumb">'
+         +   '<img src="' + p.thumb + '" alt="">'
+         +   '<button type="button" class="thumb-x" onclick="removePhoto(' + i + ')">🗑</button>'
+         + '</div>';
+  }).join('');
+}
+
+function removePhoto(i){ S.photos.splice(i, 1); renderPhotos(); }
+
+// 写真のファイル名。履歴IDと日付8桁を頭に付けて、あとから探しやすくする
+//   例）HIS0123_20261013_image.jpg
+// 同じ名前が既にあるときの連番は、保存するGAS側（filebox.gs）で付ける
+function photoName_(hid, base){
+  var d = stampDate_();
+  return (hid ? hid + '_' : '') + (d ? d + '_' : '') + base;
+}
+
+// 日付8桁。サーバーが返した今日を優先し、無ければ端末の日付を使う
+function stampDate_(){
+  var t = (S.ctx && S.ctx.today) ? String(S.ctx.today) : '';
+  var m = t.match(/(\d{4})\D?(\d{2})\D?(\d{2})/);
+  if (m) return m[1] + m[2] + m[3];
+  var n = new Date();
+  return String(n.getFullYear())
+       + ('0' + (n.getMonth() + 1)).slice(-2)
+       + ('0' + n.getDate()).slice(-2);
+}
+
+// 履歴を登録したあとに、保留していた写真を1枚ずつ上げる
+function uploadPhotos_(kanriNo, hid, done){
+  if (!S.photos.length){ done(0, 0); return; }
+  var list = S.photos.slice();
+  var ok = 0, ng = 0, i = 0;
+
+  var next = function(){
+    if (i >= list.length){ S.photos = []; renderPhotos(); done(ok, ng); return; }
+    var p = list[i++];
+    var stamp = photoName_(hid, p.name);
+    google.script.run
+      .withSuccessHandler(function(){ ok++; next(); })
+      .withFailureHandler(function(){ ng++; next(); })
+      .apiUploadFile(S.token, {
+        kanriNo: kanriNo, kind: '機器写真',
+        name: stamp, mime: p.mime, data: p.data
+      });
+  };
+  next();
+}
+
+/* ---------- タブとフォーム ---------- */
+function renderTabs(){
+  var a = document.getElementById('formArea');
+  var editing = !!S.editHid;
+  var h = '';
+
+  if (editing){
+    h += '<div class="msg edit">✏️ ' + esc(S.editHid) + ' を修正しています</div>';
+  } else {
+    h += '<div class="tabs">'
+       + '<button class="tab' + (MODE==='inspect'?' on':'') + '" onclick="setMode(\'inspect\')">✅ 点検</button>'
+       + '<button class="tab' + (MODE==='trouble'?' on':'') + '" onclick="setMode(\'trouble\')">🔧 故障報告</button>'
+       + '<button class="tab' + (MODE==='other'?' on':'') + '" onclick="setMode(\'other\')">💬 その他</button>'
+       + '</div>';
+  }
+
+  if (MODE === 'inspect')      h += renderForm(editing);
+  else if (MODE === 'other')   h += renderOther(editing);
+  else                         h += renderTrouble(editing);
+  a.innerHTML = h;
+  markLabels(a);
+
+  if (editing && S.last && S.last.payload){
+    applyEditValues(S.last.payload);
+    setUser(S.last.payload.userId);
+  }
+  if (MODE === 'inspect') updateJudge();
+  if (MODE === 'trouble' || MODE === 'other') renderPhotos();
+}
+
+function setMode(m){ MODE = m; renderTabs(); }
+
+function renderForm(editing){
+  var ctx   = S.ctx;
+  var items = ctx.items || [];
+  var h = '<div class="card">';
+  h += '<h2>📋 ' + esc(ctx.sheetName || '点検') + '</h2>';
+
+  if (!items.length){
+    h += '<p class="sub">🙇 この機器区分には点検項目がまだ登録されていません。'
+       + '⚙️ マスタ管理画面を確認してください。</p>';
+  }
+
+  for (var i=0; i<items.length; i++){
+    var it    = items[i];
+    var pv    = ctx.prev[it.id];
+    var hasPv = (pv !== undefined && pv !== null && pv !== '');
+
+    h += '<div class="item" data-id="' + esc(it.id) + '" data-type="' + esc(it.type) + '"'
+       + ' data-req="' + (it.required ? '1' : '0') + '">';
+    h += '<div class="item-ttl">' + esc(it.name)
+       + (it.required ? '<span class="req">❗必須</span>' : '') + '</div>';
+    if (it.note) h += '<div class="sub">💡 ' + esc(it.note) + '</div>';
+
+    if (it.type === '○×'){
+      h += '<div class="seg">'
+         + '<button type="button" class="seg-b ok" onclick="pick(this,\'○\')">⭕️</button>'
+         + '<button type="button" class="seg-b ng" onclick="pick(this,\'×\')">❌</button>'
+         + '</div>';
+    } else if (it.type === '数値'){
+      h += '<input type="number" step="any" inputmode="decimal" class="val">';
+    } else if (it.type === '日付'){
+      h += '<input type="month" class="val">';
+    } else {
+      h += '<input type="text" class="val">';
+    }
+
+    if (hasPv && !editing) h += '<div class="prev">🕘 前回 : ' + esc(pv) + '</div>';
+    h += '</div>';
+  }
+
+  h += '<label for="memo" style="margin-top:14px">📝 備考（任意）</label>';
+  h += '<textarea id="memo" rows="2"></textarea>';
+  h += '<div id="judgeBox" class="sub" style="margin:10px 0 2px"></div>';
+  h += '<button class="btn' + (editing?' btn-pink':'') + '" id="btnSend" onclick="sendInspection()">'
+     + (editing ? '💾 修正を保存する' : '✅ 点検を登録する') + '</button>';
+  if (editing){
+    h += '<button class="btn-sub" style="margin-top:8px" onclick="cancelEdit()">'
+       + '↩️ やめる</button>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderTrouble(editing){
+  var h = '<div class="card">';
+  h += '<h2>🔧 故障報告</h2>';
+  if (!editing){
+    h += '<p class="sub">🚦 登録すると機器のステータスが「故障中」になります。</p>';
+    h += '<p class="sub" style="margin-top:4px">💬 まだ使えるけど気になる、くらいなら '
+       + '<button type="button" class="btn-link" style="display:inline;padding:0" '
+       + 'onclick="setMode(\'other\')">その他報告</button> へ</p>';
+  }
+  h += '<label for="trouble" style="margin-top:10px">😢 故障の内容</label>';
+  h += '<textarea id="trouble" rows="4" placeholder="例）カフの加圧が安定しない"></textarea>';
+
+  if (!editing){
+    h += '<label style="margin-top:12px">📸 写真（任意・何枚でも）</label>';
+    h += '<button type="button" class="btn-sub" id="btnPickPhoto" onclick="pickPhoto()">'
+       + '📸 写真を撮る・選ぶ</button>';
+    h += '<div id="photoList" class="thumbs"></div>';
+    h += '<p class="sub">📂 撮った写真はこの機器の書類に「🖼 機器写真」として保存されます。</p>';
+  }
+
+  h += '<label for="tmemo" style="margin-top:10px">📝 備考（任意）</label>';
+  h += '<textarea id="tmemo" rows="2"></textarea>';
+  h += '<button class="btn' + (editing?' btn-pink':'') + '" id="btnTrouble" onclick="sendTrouble()" '
+     + 'style="margin-top:12px">' + (editing ? '💾 修正を保存する' : '🔧 故障を報告する') + '</button>';
+  if (editing){
+    h += '<button class="btn-sub" style="margin-top:8px" onclick="cancelEdit()">'
+       + '↩️ やめる</button>';
+  }
+  h += '</div>';
+  return h;
+}
+
+/* ---------- その他報告 ----------
+ *  「使えるけど気になること」を上げる。ステータスは変えない。
+ *  故障との線引きを、画面の一番上で言い切っておく
+ */
+var OTHER_DEFAULT = [
+  { name:'付属品・消耗品',   icon:'📦', hint:'コードが無い、電極パッドが残り少ない' },
+  { name:'異音・違和感',     icon:'👂', hint:'音が変、画面がちらつく（まだ使える）' },
+  { name:'置き場所・ラベル', icon:'📍', hint:'台帳と場所が違う、QRが剥がれた' },
+  { name:'その他',           icon:'💬', hint:'上のどれでもない' }
+];
+function otherKinds_(){
+  var k = S.ctx && S.ctx.otherKinds;
+  return (k && k.length) ? k : OTHER_DEFAULT;
+}
+
+function renderOther(editing){
+  var kinds = otherKinds_();
+  var h = '<div class="card">';
+  h += '<h2>💬 その他報告</h2>';
+  if (!editing){
+    h += '<div class="msg info" style="margin:6px 0 4px">'
+       + '💬 <b>使えるけど気になること</b>を伝えます。ステータスは変わりません。</div>';
+    h += '<p class="sub" style="margin:0 0 6px">⚠️ 使えない・危ないときは '
+       + '<button type="button" class="btn-link" style="display:inline;padding:0;color:var(--warn)" '
+       + 'onclick="setMode(\'trouble\')">🔧 故障報告</button> へ</p>';
+  }
+
+  h += '<label style="margin-top:10px">🗂 分類</label>';
+  h += '<div class="seg" id="otherCat" data-value="" '
+     + 'style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  kinds.forEach(function(k){
+    h += '<button type="button" class="seg-b ok" data-cat="' + esc(k.name) + '" '
+       + 'style="font-size:14px;padding:12px 6px;line-height:1.35;word-break:keep-all" '
+       + 'onclick="pickCat(this)">' + esc(k.icon) + ' ' + esc(k.name) + '</button>';
+  });
+  h += '</div>';
+  h += '<p class="sub" id="otherHint" style="margin:6px 0 0">👆 近いものを1つ選んでね</p>';
+
+  h += '<label for="otherText" style="margin-top:10px">✍️ 内容</label>';
+  h += '<textarea id="otherText" rows="3" placeholder="分類を選ぶと例が出ます"></textarea>';
+
+  if (!editing){
+    h += '<label style="margin-top:12px">📸 写真（任意・何枚でも）</label>';
+    h += '<button type="button" class="btn-sub" id="btnPickPhoto" onclick="pickPhoto()">'
+       + '📸 写真を撮る・選ぶ</button>';
+    h += '<div id="photoList" class="thumbs"></div>';
+    h += '<p class="sub">📂 撮った写真はこの機器の書類に「🖼 機器写真」として保存されます。</p>';
+  }
+
+  h += '<label for="omemo" style="margin-top:10px">📝 備考（任意）</label>';
+  h += '<textarea id="omemo" rows="2"></textarea>';
+  h += '<button class="btn' + (editing?' btn-pink':'') + '" id="btnOther" onclick="sendOther()" '
+     + 'style="margin-top:12px">' + (editing ? '💾 修正を保存する' : '💬 その他報告を送る') + '</button>';
+  if (editing){
+    h += '<button class="btn-sub" style="margin-top:8px" onclick="cancelEdit()">'
+       + '↩️ やめる</button>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// 分類ボタン。選んだら例文を入力欄の薄い字に出す
+function pickCat(btn){
+  var box = document.getElementById('otherCat');
+  if (!box) return;
+  box.querySelectorAll('.seg-b').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+  box.dataset.value = btn.dataset.cat;
+
+  var k = null, list = otherKinds_();
+  for (var i = 0; i < list.length; i++){ if (list[i].name === btn.dataset.cat){ k = list[i]; break; } }
+  var hint = document.getElementById('otherHint');
+  var ta = document.getElementById('otherText');
+  if (k && hint) hint.textContent = '💡 例）' + k.hint;
+  if (k && ta)   ta.placeholder  = '例）' + k.hint;
+}
+
+function setCat_(name){
+  var box = document.getElementById('otherCat');
+  if (!box) return;
+  var hit = box.querySelector('.seg-b[data-cat="' + String(name).replace(/"/g, '') + '"]');
+  if (hit) pickCat(hit);
+}
+
+function applyEditValues(pl){
+  if (MODE === 'other'){
+    setCat_(pl.category || '');
+    var ot = document.getElementById('otherText');
+    var om = document.getElementById('omemo');
+    if (ot) ot.value = pl.text || '';
+    if (om) om.value = pl.memo || '';
+    return;
+  }
+  if (MODE === 'trouble'){
+    var t = document.getElementById('trouble');
+    var m = document.getElementById('tmemo');
+    if (t) t.value = pl.trouble || '';
+    if (m) m.value = pl.memo || '';
+    return;
+  }
+  var map = {};
+  (pl.results || []).forEach(function(r){ map[r.id] = r.value; });
+  document.querySelectorAll('#formArea .item').forEach(function(el){
+    var v = map[el.dataset.id];
+    if (v === undefined) return;
+    if (el.dataset.type === '○×'){
+      var seg = el.querySelector('.seg');
+      seg.dataset.value = v;
+      seg.querySelectorAll('.seg-b').forEach(function(b){
+        var mine = (b.classList.contains('ok') && v === '○') ||
+                   (b.classList.contains('ng') && v === '×');
+        b.classList.toggle('on', mine);
+      });
+    } else {
+      el.querySelector('.val').value = v;
+    }
+  });
+  var memo = document.getElementById('memo');
+  if (memo) memo.value = pl.memo || '';
+}
+
+/* ---------- 入力 ---------- */
+function pick(btn, v){
+  var seg = btn.parentNode;
+  seg.querySelectorAll('.seg-b').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+  seg.dataset.value = v;
+  updateJudge();
+}
+
+function collect(){
+  var out = [], miss = [];
+  document.querySelectorAll('#formArea .item').forEach(function(el){
+    var type = el.dataset.type;
+    var req  = el.dataset.req === '1';
+    var v    = '';
+    if (type === '○×'){
+      v = el.querySelector('.seg').dataset.value || '';
+    } else {
+      v = (el.querySelector('.val').value || '').trim();
+    }
+    if (req && v === ''){
+      miss.push(el.querySelector('.item-ttl').textContent.replace('必須',''));
+      el.classList.add('miss');
+    } else {
+      el.classList.remove('miss');
+    }
+    if (v !== '') out.push({ id: el.dataset.id, value: v });
+  });
+  return { results: out, miss: miss };
+}
+
+function updateJudge(){
+  var box = document.getElementById('judgeBox');
+  if (!box) return;
+  var ng = false;
+  document.querySelectorAll('#formArea .item').forEach(function(el){
+    if (el.dataset.type === '○×' && el.querySelector('.seg').dataset.value === '×') ng = true;
+  });
+  box.innerHTML = '⚖️ 総合判定 : <span class="badge ' + (ng?'ng':'ok') + '">'
+                + (ng ? '❌ NG' : '✅ OK') + '</span>'
+                + (ng ? ' <span class="sub">❌があるため</span>' : '');
+}
+
+/* ---------- 送信 ---------- */
+function sendInspection(){
+  var user = document.getElementById('user').value;
+  if (!user){ err('実施者を選んでね🙋'); return; }
+
+  var c = collect();
+  if (c.miss.length){ err('✍️ 未入力があります : ' + c.miss.join('、')); return; }
+  if (!c.results.length){ err('📋 点検結果が入力されていません'); return; }
+
+  var payload = {
+    kanriNo: S.ctx.device.kanriNo,
+    userId : user,
+    results: c.results,
+    memo   : (document.getElementById('memo') || {}).value || ''
+  };
+  var el = document.getElementById('btnSend');
+  var wasEdit = !!S.editHid;
+  busy(true, el);
+
+  var ok = function(r){
+    busy(false, el);
+    S.last = { kind:'inspect', hid:r.id, payload:payload };
+    S.editHid = ''; S.editKind = '';
+    done('🎉', wasEdit ? '💾 修正を保存しました' : '✅ 点検を登録しました',
+         '🆔 ' + r.id + '　⚖️ 総合判定 ' + (r.judge === 'NG' ? '❌ NG' : '✅ OK'));
+  };
+  var ng = function(e){
+    busy(false, el);
+    if (String(e.message).indexOf('AUTH') >= 0){ clearToken(); show('vPw'); return; }
+    err(e.message);
+  };
+
+  if (wasEdit && S.editKind === 'inspect'){
+    payload.hid = S.editHid;
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiUpdateInspection(S.token, payload);
+  } else {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiSubmitInspection(S.token, payload);
+  }
+}
+
+function sendTrouble(){
+  var user = document.getElementById('user').value;
+  if (!user){ err('報告者を選んでね🙋'); return; }
+  var tx = document.getElementById('trouble').value.trim();
+  if (!tx){ err('✍️ 故障の内容を入力してね'); return; }
+
+  var payload = {
+    kanriNo: S.ctx.device.kanriNo,
+    userId : user,
+    trouble: tx,
+    memo   : (document.getElementById('tmemo') || {}).value || ''
+  };
+  var el = document.getElementById('btnTrouble');
+  var wasEdit = !!S.editHid;
+  var nPhoto  = S.photos.length;
+  busy(true, el);
+
+  var finish = function(r, upOk, upNg){
+    busy(false, el);
+    S.last = { kind:'trouble', hid:r.id, payload:payload };
+    S.editHid = ''; S.editKind = '';
+    if (S.ctx && S.ctx.device && r.status) S.ctx.device.status = r.status;
+    var body = '🆔 ' + r.id
+              + (r.status ? '　🚦 ステータスを「' + r.status + '」にしました' : '');
+    if (upOk) body += '　📸 写真 ' + upOk + ' 枚を添付';
+    if (upNg) body += '（⚠️ ' + upNg + ' 枚は失敗）';
+    done('🔧', wasEdit ? '💾 修正を保存しました' : '🔧 故障を報告しました', body);
+    loadFileList();
+  };
+
+  var ok = function(r){
+    if (!wasEdit && nPhoto){
+      el.innerHTML = '<span class="spin"></span>📸 写真を保存中…';
+      uploadPhotos_(payload.kanriNo, r.id, function(a, b){ finish(r, a, b); });
+    } else {
+      finish(r, 0, 0);
+    }
+  };
+  var ng = function(e){
+    busy(false, el);
+    if (String(e.message).indexOf('AUTH') >= 0){ clearToken(); show('vPw'); return; }
+    err(e.message);
+  };
+
+  if (wasEdit && S.editKind === 'trouble'){
+    payload.hid = S.editHid;
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiUpdateTrouble(S.token, payload);
+  } else {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiSubmitTrouble(S.token, payload);
+  }
+}
+
+function sendOther(){
+  var user = document.getElementById('user').value;
+  if (!user){ err('報告者を選んでね🙋'); return; }
+  var cat = (document.getElementById('otherCat') || { dataset:{} }).dataset.value || '';
+  if (!cat){ err('🗂 分類を選んでね'); return; }
+  var tx = document.getElementById('otherText').value.trim();
+  if (!tx){ err('✍️ 内容を入力してね'); return; }
+
+  var payload = {
+    kanriNo : S.ctx.device.kanriNo,
+    userId  : user,
+    category: cat,
+    text    : tx,
+    memo    : (document.getElementById('omemo') || {}).value || ''
+  };
+  var el = document.getElementById('btnOther');
+  var wasEdit = !!S.editHid;
+  var nPhoto  = S.photos.length;
+  busy(true, el);
+
+  var finish = function(r, upOk, upNg){
+    busy(false, el);
+    S.last = { kind:'other', hid:r.id, payload:payload };
+    S.editHid = ''; S.editKind = '';
+    var body = '🆔 ' + r.id + '　🗂 ' + cat + '　🚦 ステータスはそのまま';
+    if (upOk) body += '　📸 写真 ' + upOk + ' 枚を添付';
+    if (upNg) body += '（⚠️ ' + upNg + ' 枚は失敗）';
+    done('💬', wasEdit ? '💾 修正を保存しました' : '💬 その他報告を送りました', body);
+    loadFileList();
+  };
+
+  var ok = function(r){
+    if (!wasEdit && nPhoto){
+      el.innerHTML = '<span class="spin"></span>📸 写真を保存中…';
+      uploadPhotos_(payload.kanriNo, r.id, function(a, b){ finish(r, a, b); });
+    } else {
+      finish(r, 0, 0);
+    }
+  };
+  var ng = function(e){
+    busy(false, el);
+    if (String(e.message).indexOf('AUTH') >= 0){ clearToken(); show('vPw'); return; }
+    err(e.message);
+  };
+
+  if (wasEdit && S.editKind === 'other'){
+    payload.hid = S.editHid;
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiUpdateOther(S.token, payload);
+  } else {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng)
+      .apiSubmitOther(S.token, payload);
+  }
+}
+
+/* ---------- 完了・修正 ---------- */
+function done(emoji, title, body){
+  document.getElementById('doneEmoji').textContent = emoji;
+  document.getElementById('doneTitle').textContent = title;
+  document.getElementById('doneBody').textContent  = body;
+  show('vDone');
+}
+
+function startEdit(){
+  if (!S.last || !S.last.hid){ err('🕘 修正できる記録がありません'); return; }
+  S.editHid  = S.last.hid;
+  S.editKind = S.last.kind;
+  MODE = S.last.kind;
+  show('vMain');
+  renderTabs();
+}
+
+function cancelEdit(){
+  S.editHid = ''; S.editKind = '';
+  MODE = 'inspect';
+  renderTabs();
+}
+
+function nextDevice(){
+  S.editHid = ''; S.editKind = '';
+  S.photos = [];
+  THUMB.no = ''; THUMB.url = '';
+  document.getElementById('kanri').value = '';
+  show('vFind');
+}
+</script>

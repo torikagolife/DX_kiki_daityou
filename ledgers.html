@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>医療機器管理台帳</title>
+<style>
+/* ===================== 基本 ===================== */
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ margin:0; padding:0; }
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",
+              "Noto Sans JP","Yu Gothic",Meiryo,sans-serif;
+  background:#eef2f6; color:#1c2b36; font-size:14px; line-height:1.6;
+}
+.hide{ display:none !important; }
+.center{ text-align:center; }
+.sub{ color:#7b8a99; font-size:12px; }
+.none{ color:#c3ccd5; }
+
+/* ===================== ヘッダー ===================== */
+header{
+  background:linear-gradient(135deg,#1a5d8f 0%,#14486e 100%);
+  color:#fff; padding:14px 16px 12px;
+  box-shadow:0 2px 8px rgba(0,0,0,.18);
+  position:sticky; top:0; z-index:40;
+}
+header h1{ margin:0; font-size:17px; font-weight:700; letter-spacing:.02em; }
+header .as{ font-size:11px; opacity:.82; margin-top:2px; }
+/* ===================== 本体枠 ===================== */
+/* nav.html が参照する色。定義しないと nav 側のフォールバック色になる */
+:root{ --card:#fff; --line:#cfd9e2; --sub:#536574; --accent:#1a5d8f; }
+.wrap{ max-width:100%; padding:12px; }
+.card{
+  background:#fff; border-radius:10px; padding:14px;
+  box-shadow:0 1px 4px rgba(20,40,60,.1); margin-bottom:12px;
+}
+
+/* ===================== ログイン ===================== */
+#vPw{ max-width:360px; margin:40px auto; }
+#vPw h2{ margin:0 0 4px; font-size:16px; }
+label{ display:block; font-size:12px; font-weight:700; color:#536574; margin:12px 0 4px; }
+input[type=password],input[type=text],select{
+  width:100%; padding:11px 12px; font-size:15px;
+  border:1.5px solid #cfd9e2; border-radius:8px; background:#fff; color:#1c2b36;
+}
+input:focus,select:focus{ outline:none; border-color:#1a5d8f; }
+button{ font-family:inherit; cursor:pointer; }
+.btn{
+  width:100%; padding:13px; font-size:15px; font-weight:700;
+  background:#1a5d8f; color:#fff; border:none; border-radius:8px; margin-top:16px;
+}
+.btn:disabled{ opacity:.6; }
+.btn-sub{
+  padding:10px 14px; font-size:13px; font-weight:700;
+  background:#fff; color:#1a5d8f; border:1.5px solid #1a5d8f; border-radius:8px;
+}
+.spin{
+  display:inline-block; width:12px; height:12px; margin-right:6px;
+  border:2px solid rgba(26,93,143,.25); border-top-color:#1a5d8f;
+  border-radius:50%; animation:sp .7s linear infinite; vertical-align:-1px;
+}
+.btn .spin{ border-color:rgba(255,255,255,.35); border-top-color:#fff; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+
+/* ===================== エラー帯 ===================== */
+#err{
+  position:fixed; left:12px; right:12px; bottom:14px; z-index:300;
+  background:#c0392b; color:#fff; padding:12px 14px; border-radius:8px;
+  font-size:13px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.25);
+}
+.msg-err{
+  background:#fdecea; border:1px solid #f5b7b1; color:#a93226;
+  padding:12px 14px; border-radius:8px; font-size:13px; font-weight:600;
+}
+
+/* ===================== KPI ===================== */
+#kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+.kpi{
+  background:#fff; border-radius:10px; padding:12px 8px; text-align:center;
+  box-shadow:0 1px 4px rgba(20,40,60,.1); border:2px solid transparent;
+}
+.kpi .n{ font-size:22px; font-weight:800; line-height:1.1; color:#14486e; }
+.kpi .t{ font-size:11px; color:#6b7a89; margin-top:3px; font-weight:600; }
+.kpi.red .n{ color:#c0392b; }
+.kpi.warn .n{ color:#c87f0a; }
+.kpi.on{ border-color:#1a5d8f; background:#eaf3fa; }
+.kpi:active{ opacity:.75; }
+@media (max-width:560px){
+  #kpis{ grid-template-columns:repeat(2,1fr); }
+  .kpi .n{ font-size:20px; }
+}
+
+/* ===================== 絞り込み ===================== */
+.filters{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+@media (max-width:760px){ .filters{ grid-template-columns:repeat(2,1fr); } }
+.filters select{ padding:9px 10px; font-size:13px; }
+.srch{ display:flex; gap:8px; margin-top:8px; }
+.srch input{ flex:1; padding:9px 10px; font-size:13px; }
+.srch button{ white-space:nowrap; }
+.bar{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; margin:0 0 6px; flex-wrap:wrap;
+}
+.bar .l{ font-size:13px; font-weight:700; color:#536574; }
+
+/* ===================== テーブル ===================== */
+.scwrap{ background:#fff; border-radius:10px; box-shadow:0 1px 4px rgba(20,40,60,.1); }
+#scTop{ overflow-x:auto; overflow-y:hidden; height:14px; border-radius:10px 10px 0 0; }
+#scTopInner{ height:1px; }
+#scBody{ overflow-x:auto; border-radius:0 0 10px 10px; }
+table{ border-collapse:collapse; width:max-content; min-width:100%; font-size:12.5px; }
+thead th{
+  background:#14486e; color:#fff; font-weight:700; font-size:12px;
+  padding:9px 10px; text-align:left; white-space:nowrap;
+  position:sticky; top:0; z-index:5; cursor:pointer; user-select:none;
+}
+thead th:hover{ background:#1a5d8f; }
+thead th.sorted::after{ content:' ▼'; font-size:9px; opacity:.85; }
+thead th.sorted.asc::after{ content:' ▲'; }
+tbody td{
+  padding:8px 10px; border-bottom:1px solid #e6ecf2;
+  white-space:nowrap; vertical-align:middle;
+}
+tbody tr:nth-child(even){ background:#fafcfe; }
+tbody tr:hover{ background:#eef6fc; }
+
+/* 行のステータス色（目立たせる） */
+tbody tr.st-trouble{ background:#fdecea !important; }
+tbody tr.st-trouble:hover{ background:#fbd9d4 !important; }
+tbody tr.st-repair{ background:#fff4e0 !important; }
+tbody tr.st-repair:hover{ background:#ffe9c4 !important; }
+tbody tr.st-lend{ background:#eef3ff !important; }
+tbody tr.st-lend:hover{ background:#dfe8ff !important; }
+tbody tr.st-retired{ background:#f3f4f5 !important; color:#95a2ae; }
+tbody tr.st-retired:hover{ background:#e8eaec !important; }
+
+td.over{ background:#ffe2de !important; color:#a93226; font-weight:700; }
+
+.pill{
+  display:inline-block; padding:2px 8px; border-radius:11px;
+  font-size:11px; font-weight:700; white-space:nowrap;
+}
+.pill.ok{ background:#e3f6ea; color:#1e7e45; }
+.pill.ng{ background:#c0392b; color:#fff; }
+.pill.rp{ background:#e67e22; color:#fff; }
+.pill.ld{ background:#3b5bdb; color:#fff; }
+.pill.gy{ background:#dfe3e7; color:#6b7a89; }
+
+/* ===================== 書類列 ===================== */
+th.docs-col{ cursor:default !important; width:46px; text-align:center !important; }
+th.docs-col:hover{ background:#14486e; }
+td.docs-col{ text-align:center; padding:4px 6px; }
+.doc-btn{
+  border:1.5px solid #cfd9e2; background:#fff; border-radius:7px;
+  padding:4px 8px; font-size:15px; line-height:1.1;
+}
+.doc-btn:hover{ border-color:#1a5d8f; background:#eaf3fa; }
+.doc-btn:active{ opacity:.6; }
+
+/* ===================== モーダル ===================== */
+.ov{
+  display:none; position:fixed; inset:0; z-index:200;
+  background:rgba(14,30,45,.55); padding:16px;
+  overflow-y:auto; -webkit-overflow-scrolling:touch;
+}
+.ov.on{ display:block; }
+.dlg{
+  background:#fff; border-radius:12px; max-width:560px; margin:24px auto;
+  box-shadow:0 10px 40px rgba(0,0,0,.3); overflow:hidden;
+}
+.dlg .hd{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+  padding:13px 14px; background:#f4f7fa; border-bottom:1px solid #e1e8ef;
+}
+.dlg .hd h3{ margin:0; font-size:15px; font-weight:700; word-break:break-all; }
+.dlg .bd{ padding:14px; }
+.x{
+  border:none; background:#e1e8ef; color:#536574; border-radius:50%;
+  width:28px; height:28px; font-size:16px; line-height:1; flex:0 0 auto; font-weight:700;
+}
+.x:active{ opacity:.6; }
+
+.doc-kind{
+  font-size:11px; font-weight:800; color:#1a5d8f; letter-spacing:.06em;
+  margin:12px 0 5px; padding-bottom:3px; border-bottom:1.5px solid #dbe5ee;
+}
+.doc-kind:first-child{ margin-top:0; }
+.doc-row{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  padding:9px 10px; margin-bottom:5px;
+  background:#fff; border:1.5px solid #e1e8ef; border-radius:9px;
+}
+.doc-row:hover{ border-color:#1a5d8f; background:#f4faff; }
+.doc-row:active{ opacity:.7; }
+.doc-ic{ font-size:20px; flex:0 0 auto; }
+.doc-tx{ display:flex; flex-direction:column; min-width:0; }
+.doc-nm{
+  font-size:13px; font-weight:600; color:#1c2b36;
+  word-break:break-all; line-height:1.35;
+}
+#viewBody img{
+  display:block; max-width:100%; height:auto;
+  border-radius:8px; border:1px solid #e1e8ef;
+}
+
+/* ===================== 印刷 ===================== */
+@media print{
+  header .navs, .nav, .filters, .srch, #kpis, #err, .bar button,
+  .ov, th.docs-col, td.docs-col, #scTop { display:none !important; }
+  body{ background:#fff; font-size:10px; }
+  .wrap{ padding:0; }
+  .card{ box-shadow:none; padding:0; margin:0 0 6px; }
+  .scwrap{ box-shadow:none; }
+  #scBody{ overflow:visible !important; }
+  table{ width:100% !important; font-size:9px; }
+  thead th{ background:#14486e !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  tbody td{ white-space:normal; }
+  tbody tr,.pill,td.over{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page{ size:A3 landscape; margin:8mm; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📋 医療機器管理台帳</h1>
+  <div class="as" id="asOf">読み込み中…</div>
+</header>
+
+<div class="wrap" style="padding-bottom:0">
+  <?!= include('nav', { navUrl: navUrl, navNow: navNow }); ?>
+</div>
+
+<div id="loading" class="wrap center" style="padding-top:20px">
+  <span class="spin"></span>📥 読み込み中…
+</div>
+
+<!-- ========== ログイン ========== -->
+<div id="vPw" class="wrap hide">
+  <div class="card">
+    <h2>📋 台帳ビュー</h2>
+    <p class="sub">🔑 管理用パスワードを入力してください。</p>
+    <label for="pw">🔑 パスワード</label>
+    <input type="password" id="pw" inputmode="numeric" autocomplete="off"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn" id="btnPw" onclick="doLogin()">🔓 開く</button>
+  </div>
+</div>
+
+<!-- ========== メイン ========== -->
+<div id="vMain" class="wrap hide">
+
+  <div id="kpis"></div>
+
+  <div class="card">
+    <div class="filters">
+      <select id="fSite" onchange="render()"></select>
+      <select id="fDept" onchange="render()"></select>
+      <select id="fCat"  onchange="render()"></select>
+      <select id="fStat" onchange="render()"></select>
+    </div>
+    <div class="srch">
+      <input type="text" id="q" placeholder="🔍 管理番号・機器名・型番・製造番号で検索"
+             oninput="render()">
+      <button class="btn-sub" onclick="clearAll()">🧹 クリア</button>
+    </div>
+  </div>
+
+  <div class="bar">
+    <span class="l" id="cnt">—</span>
+    <button class="btn-sub" onclick="window.print()">🖨 印刷</button>
+  </div>
+
+  <div class="scwrap">
+    <div id="scTop"><div id="scTopInner"></div></div>
+    <div id="scBody"><table id="tbl"></table></div>
+  </div>
+
+</div>
+
+<div id="err" class="hide"></div>
+
+<!-- ========== 書類一覧 ========== -->
+<div class="ov" id="ovDocs">
+  <div class="dlg">
+    <div class="hd">
+      <div>
+        <h3 id="docsTitle">📎 書類</h3>
+        <div class="sub" id="docsSub"></div>
+      </div>
+      <button class="x" onclick="closeDocs()">✕</button>
+    </div>
+    <div class="bd" id="docsBody"></div>
+  </div>
+</div>
+
+<!-- ========== 書類プレビュー ========== -->
+<div class="ov" id="ovView">
+  <div class="dlg">
+    <div class="hd">
+      <h3 id="viewTitle"></h3>
+      <button class="x" onclick="closeView()">✕</button>
+    </div>
+    <div class="bd" id="viewBody"></div>
+  </div>
+</div>
+
+<script>
+var S = { token:'', data:null, filter:'', sort:{ col:'kanriNo', asc:true },
+          files:[], viewUrl:'', viewName:'' };
+
+var COLS = [
+  { k:'kanriNo',  t:'🏷 管理番号' },
+  { k:'name',     t:'🩺 機器名' },
+  { k:'category', t:'🗂 機器区分' },
+  { k:'maker',    t:'🏭 メーカー' },
+  { k:'model',    t:'🔤 型番' },
+  { k:'serial',   t:'🔢 製造番号' },
+  { k:'dept',     t:'🏢 設置部署' },
+  { k:'loc',      t:'📍 保管場所' },
+  { k:'status',   t:'🚦 ステータス' },
+  { k:'lastDept', t:'✅ 最終点検日' },
+  { k:'nextDept', t:'🗓 次回点検予定日' },
+  { k:'lastMaker',t:'🛠 最終業者点検日' },
+  { k:'nextMaker',t:'📆 次回業者点検予定日' },
+  { k:'years',    t:'⏳ 経過年数' },
+  { k:'tokutei',  t:'⭐ 特定保守' },
+  { k:'devClass', t:'⚠️ クラス分類' },
+  { k:'fileBox',  t:'📂 ファイルBOX' },
+  { k:'memo',     t:'📝 備考' }
+];
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function show(id){
+  ['vPw','vMain'].forEach(function(v){
+    document.getElementById(v).classList.toggle('hide', v !== id);
+  });
+  document.getElementById('loading').classList.add('hide');
+}
+function err(m){
+  var e = document.getElementById('err');
+  e.textContent = '⚠️ ' + m;
+  e.classList.remove('hide');
+  setTimeout(function(){ e.classList.add('hide'); }, 6000);
+}
+
+/* ---------- 認証 ---------- */
+function tk(){ try{ return localStorage.getItem('mkdx_admin_tk') || ''; }catch(e){ return ''; } }
+function setTk(t){ S.token = t; try{ localStorage.setItem('mkdx_admin_tk', t); }catch(e){} }
+function clrTk(){ S.token=''; try{ localStorage.removeItem('mkdx_admin_tk'); }catch(e){} }
+
+window.addEventListener('DOMContentLoaded', function(){
+  var t = tk();
+  if (!t){ show('vPw'); document.getElementById('pw').focus(); return; }
+  S.token = t;
+  google.script.run
+    .withSuccessHandler(function(ok){
+      if (!ok){ clrTk(); show('vPw'); return; }
+      loadData();
+    })
+    .withFailureHandler(function(){ clrTk(); show('vPw'); })
+    .pingToken(t, 'admin');
+});
+
+function doLogin(){
+  var el = document.getElementById('btnPw');
+  var pw = document.getElementById('pw').value;
+  if (!pw) return;
+  el.disabled = true; el.innerHTML = '<span class="spin"></span>確認中…';
+  google.script.run
+    .withSuccessHandler(function(r){
+      el.disabled = false; el.innerHTML = '🔓 開く';
+      if (!r.ok){ alert('🙅 パスワードが違います'); return; }
+      setTk(r.token);
+      document.getElementById('pw').value = '';
+      document.getElementById('vPw').classList.add('hide');
+      document.getElementById('loading').classList.remove('hide');
+      loadData();
+    })
+    .withFailureHandler(function(e){
+      el.disabled = false; el.innerHTML = '🔓 開く'; alert('⚠️ ' + e.message);
+    })
+    .verifyPassword(pw, 'admin');
+}
+
+/* ---------- 読み込み ---------- */
+function loadData(){
+  google.script.run
+    .withSuccessHandler(function(d){
+      S.data = d;
+      document.getElementById('asOf').textContent = '🕒 ' + d.today + ' 時点';
+      fill('fSite', d.sites, '🏥 すべての拠点');
+      fill('fDept', d.depts, '🏢 すべての部署');
+      fill('fCat',  d.cats,  '🗂 すべての区分');
+      fill('fStat', d.stats, '🚦 すべての状態');
+      render();
+      show('vMain');
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      document.getElementById('loading').innerHTML =
+        '<span style="color:#c0392b">⚠️ 読み込みに失敗しました<br>'
+        + esc(e.message) + '</span>';
+    })
+    .apiGetLedger(S.token);
+}
+
+function fill(id, arr, all){
+  document.getElementById(id).innerHTML = '<option value="">' + all + '</option>'
+    + arr.map(function(v){ return '<option>' + esc(v) + '</option>'; }).join('');
+}
+
+/* ---------- 絞り込み ---------- */
+function setFilter(f){
+  S.filter = (S.filter === f) ? '' : f;
+  render();
+}
+function clearAll(){
+  S.filter = '';
+  ['fSite','fDept','fCat','fStat'].forEach(function(id){
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('q').value = '';
+  render();
+}
+
+function filtered(){
+  if (!S.data) return [];
+  var site = document.getElementById('fSite').value;
+  var dept = document.getElementById('fDept').value;
+  var cat  = document.getElementById('fCat').value;
+  var stat = document.getElementById('fStat').value;
+  var q    = document.getElementById('q').value.trim().toUpperCase();
+
+  return S.data.rows.filter(function(r){
+    if (site && r.site !== site) return false;
+    if (dept && r.dept !== dept) return false;
+    if (cat  && r.category !== cat) return false;
+    if (stat && r.status !== stat) return false;
+    if (S.filter === 'over'    && !(r._overDept || r._overMaker)) return false;
+    if (S.filter === 'trouble' && !r._trouble) return false;
+    if (S.filter === 'none'    && !r._noRecord) return false;
+    if (q){
+      var s = (r.kanriNo + ' ' + r.name + ' ' + r.model + ' ' + r.serial).toUpperCase();
+      if (s.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function sortBy(col){
+  if (S.sort.col === col) S.sort.asc = !S.sort.asc;
+  else { S.sort.col = col; S.sort.asc = true; }
+  render();
+}
+
+/* ---------- 描画 ---------- */
+function render(){
+  if (!S.data) return;
+  var all = S.data.rows;
+
+  var over    = all.filter(function(r){ return r._overDept || r._overMaker; }).length;
+  var trouble = all.filter(function(r){ return r._trouble; }).length;
+  var none    = all.filter(function(r){ return r._noRecord; }).length;
+  var k = [
+    { f:'',        n:all.length, t:'🩺 登録機器', c:'' },
+    { f:'over',    n:over,       t:'⏰ 点検期限切れ', c:'red' },
+    { f:'trouble', n:trouble,    t:'🔧 故障中・修理中', c:'warn' },
+    { f:'none',    n:none,       t:'🆕 点検記録なし', c:'' }
+  ];
+  document.getElementById('kpis').innerHTML = k.map(function(x){
+    return '<div class="kpi ' + x.c + (S.filter === x.f && x.f ? ' on' : '') + '" '
+         + 'onclick="setFilter(\'' + x.f + '\')">'
+         + '<div class="n">' + x.n + '</div><div class="t">' + x.t + '</div></div>';
+  }).join('');
+
+  var list = filtered().slice();
+  var col = S.sort.col, asc = S.sort.asc ? 1 : -1;
+  list.sort(function(a, b){
+    var av = String(a[col] || ''), bv = String(b[col] || '');
+    if (av === bv) return String(a.kanriNo).localeCompare(String(b.kanriNo));
+    if (av === '') return 1;
+    if (bv === '') return -1;
+    return av.localeCompare(bv, 'ja') * asc;
+  });
+
+  document.getElementById('cnt').textContent =
+    '📄 ' + list.length + ' / ' + all.length + ' 件';
+
+  // 1列目は書類ボタン（ソート対象外）
+  var h = '<thead><tr><th class="docs-col">📎</th>';
+  COLS.forEach(function(c){
+    h += '<th class="' + (S.sort.col === c.k ? 'sorted ' + (S.sort.asc ? 'asc' : '') : '')
+       + '" onclick="sortBy(\'' + c.k + '\')">' + esc(c.t) + '</th>';
+  });
+  h += '</tr></thead><tbody>';
+
+  if (!list.length){
+    h += '<tr><td colspan="' + (COLS.length + 1) + '" class="sub center" '
+       + 'style="padding:30px">🔍 該当なし</td></tr>';
+  }
+
+  list.forEach(function(r){
+    var sc = '';
+    if (r.status === '廃棄' || r.status === '紛失') sc = ' class="st-retired"';
+    else if (r.status === '故障中') sc = ' class="st-trouble"';
+    else if (r.status === '修理中') sc = ' class="st-repair"';
+    else if (r.status === '貸出中') sc = ' class="st-lend"';
+    h += '<tr' + sc + '>';
+
+    h += '<td class="docs-col"><button class="doc-btn" title="書類を見る" '
+       + 'onclick="openDocs(\'' + esc(r.kanriNo) + '\',\'' + esc(r.name) + '\')">📎</button></td>';
+
+    COLS.forEach(function(c){
+      var v = r[c.k];
+      var td = '';
+      if (c.k === 'status'){
+        var p = 'ok';
+        if (r.status === '廃棄' || r.status === '紛失') p = 'gy';
+        else if (r.status === '故障中') p = 'ng';
+        else if (r.status === '修理中') p = 'rp';
+        else if (r.status === '貸出中') p = 'ld';
+        var ic = { ok:'✅', ng:'🔧', rp:'🛠', ld:'📤', gy:'🗑' }[p];
+        td = '<span class="pill ' + p + '">' + ic + ' ' + esc(v) + '</span>';
+      } else if (c.k === 'nextDept'){
+        td = v ? esc(v) : '<span class="none">—</span>';
+        h += '<td' + (r._overDept ? ' class="over"' : '') + '>' + td + '</td>';
+        return;
+      } else if (c.k === 'nextMaker'){
+        td = v ? esc(v) : '<span class="none">—</span>';
+        h += '<td' + (r._overMaker ? ' class="over"' : '') + '>' + td + '</td>';
+        return;
+      } else if (c.k === 'years'){
+        td = v ? esc(v) + '年' : '<span class="none">—</span>';
+      } else {
+        td = v ? esc(v) : '<span class="none">—</span>';
+      }
+      h += '<td>' + td + '</td>';
+    });
+    h += '</tr>';
+  });
+
+  document.getElementById('tbl').innerHTML = h + '</tbody>';
+  syncScroll();
+}
+
+/* ---------- 上下のスクロールバーを連動させる ---------- */
+var scLock = false;
+function syncScroll(){
+  var top  = document.getElementById('scTop');
+  var body = document.getElementById('scBody');
+  var tbl  = document.getElementById('tbl');
+  if (!top || !body || !tbl) return;
+
+  document.getElementById('scTopInner').style.width = tbl.scrollWidth + 'px';
+
+  if (top.dataset.bound) return;
+  top.dataset.bound = '1';
+  top.addEventListener('scroll', function(){
+    if (scLock) return;
+    scLock = true; body.scrollLeft = top.scrollLeft; scLock = false;
+  });
+  body.addEventListener('scroll', function(){
+    if (scLock) return;
+    scLock = true; top.scrollLeft = body.scrollLeft; scLock = false;
+  });
+}
+
+window.addEventListener('resize', syncScroll);
+
+/* =============================================================
+ *  書類（ファイルBOX）
+ * ============================================================= */
+
+function openDocs(kanriNo, name){
+  S.files = [];
+  document.getElementById('docsTitle').textContent = '📎 ' + kanriNo + ' の書類';
+  document.getElementById('docsSub').textContent   = name || '';
+  document.getElementById('docsBody').innerHTML =
+    '<p class="sub center" style="padding:30px 0">'
+    + '<span class="spin"></span>📥 読み込み中…</p>';
+  document.getElementById('ovDocs').classList.add('on');
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      S.files = d.files || [];
+      renderDocs();
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ closeDocs(); clrTk(); show('vPw'); return; }
+      document.getElementById('docsBody').innerHTML =
+        '<div class="msg-err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiListFiles(S.token, kanriNo);
+}
+
+function renderDocs(){
+  var box = document.getElementById('docsBody');
+  if (!S.files.length){
+    box.innerHTML = '<p class="sub center" style="padding:24px 0">'
+      + '🗒 この機器の書類はまだ登録されていません。</p>';
+    return;
+  }
+  var h = '', lastKind = '';
+  S.files.forEach(function(f, i){
+    if (f.kind !== lastKind){
+      h += '<div class="doc-kind">' + esc(f.kind) + '</div>';
+      lastKind = f.kind;
+    }
+    var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
+    h += '<button type="button" class="doc-row" onclick="openFile(' + i + ')">'
+       +   '<span class="doc-ic">' + ic + '</span>'
+       +   '<span class="doc-tx">'
+       +     '<span class="doc-nm">' + esc(f.name) + '</span>'
+       +     '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span>'
+       +   '</span>'
+       + '</button>';
+  });
+  box.innerHTML = h;
+}
+
+function closeDocs(){ document.getElementById('ovDocs').classList.remove('on'); }
+
+function openFile(idx){
+  var f = S.files[idx];
+  if (!f) return;
+  if (f.tooBig){ err(f.name + ' は大きすぎて開けません（' + f.sizeText + '）'); return; }
+
+  document.getElementById('viewTitle').textContent = f.name;
+  document.getElementById('viewBody').innerHTML =
+    '<p class="sub center" style="padding:30px 0">'
+    + '<span class="spin"></span>📥 読み込み中…</p>';
+  document.getElementById('ovView').classList.add('on');
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = 'data:' + d.mime + ';base64,' + d.data;
+      S.viewUrl = url; S.viewName = d.name;
+      if (String(d.mime).indexOf('image/') === 0){
+        document.getElementById('viewBody').innerHTML =
+          '<img src="' + url + '" alt="' + esc(d.name) + '">'
+          + '<button class="btn-sub" style="width:100%;margin-top:10px" '
+          + 'onclick="saveFile()">⬇️ この画像を保存</button>';
+      } else {
+        document.getElementById('viewBody').innerHTML =
+          '<p class="sub center" style="padding:20px 0">'
+          + '📄 この形式は画面では開けません。保存して確認してください。</p>'
+          + '<button class="btn-sub" style="width:100%" onclick="saveFile()">'
+          + '⬇️ ' + esc(d.name) + ' を保存</button>';
+      }
+    })
+    .withFailureHandler(function(e){
+      document.getElementById('viewBody').innerHTML =
+        '<div class="msg-err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiGetFile(S.token, f.id);
+}
+
+function saveFile(){
+  if (!S.viewUrl) return;
+  var a = document.createElement('a');
+  a.href = S.viewUrl;
+  a.download = S.viewName || 'file';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function closeView(){
+  document.getElementById('ovView').classList.remove('on');
+  document.getElementById('viewBody').innerHTML = '';
+  S.viewUrl = ''; S.viewName = '';
+}
+</script>
+</body>
+</html>
