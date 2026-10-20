@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+*{box-sizing:border-box}
+:root{--bg:#f4f8f8;--card:#fff;--line:#dfe9ea;--ink:#1d2b2e;--sub:#6b8286;
+  --accent:#1f7f88;--accent-bg:#e8f3f4;--warn:#c2621f;--warn-bg:#fdf1e8;--ng:#c0392b;--ng-bg:#fbeceb}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;font-size:14px}
+.top{background:#fff;border-bottom:1px solid var(--line);padding:14px 18px 2px;position:sticky;top:0;z-index:5}
+.top h1{font-size:17px;margin:0 0 10px}
+.wrap{max-width:1180px;margin:0 auto;padding:16px 16px 120px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 16px 14px}
+.card h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:6px}
+.card h2 .n{margin-left:auto;font-size:12px;color:var(--sub);font-weight:400}
+.hint{font-size:12px;color:var(--sub);line-height:1.6;margin:0 0 10px}
+.span2{grid-column:1/-1}
+
+/* 一覧（1行1人） */
+.li{display:flex;gap:6px;margin-bottom:6px}
+.li input{flex:1;min-width:0}
+input[type=text],input[type=password],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  font-size:14px;font-family:inherit;background:#fff;color:var(--ink);width:100%}
+input.bad{border-color:var(--ng);background:var(--ng-bg)}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+.empty{font-size:13px;color:var(--sub);padding:8px 0}
+
+button{font-family:inherit;font-size:14px;font-weight:700;border:0;border-radius:8px;
+  padding:9px 16px;cursor:pointer;background:var(--accent);color:#fff;white-space:nowrap}
+button.sub{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+button.ghost{background:#fff;color:var(--sub);border:1px solid var(--line);padding:8px 11px}
+button.ghost:hover{color:var(--ng);border-color:var(--ng)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:active:not(:disabled){opacity:.75}
+
+/* トグル */
+.tg{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.tg:first-of-type{border-top:0}
+.tg .tx{flex:1}
+.tg .tx b{display:block;font-size:14px}
+.tg .tx span{font-size:12px;color:var(--sub);line-height:1.5}
+.sw{position:relative;width:46px;height:26px;flex:0 0 46px;margin-top:2px}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw i{position:absolute;inset:0;background:#cfdcde;border-radius:99px;transition:.15s;cursor:pointer}
+.sw i:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;
+  border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sw input:checked + i{background:var(--accent)}
+.sw.danger input:checked + i{background:var(--ng)}
+.sw input:checked + i:before{transform:translateX(20px)}
+.sw input:focus-visible + i{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 状態 */
+.st{width:100%;border-collapse:collapse;font-size:13px}
+.st td{padding:7px 6px;border-top:1px solid var(--line);vertical-align:top}
+.st tr:first-child td{border-top:0}
+.st .k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--sub)}
+.bd{display:inline-block;font-size:12px;font-weight:700;border-radius:99px;padding:2px 9px;white-space:nowrap}
+.bd.ok{background:var(--accent-bg);color:var(--accent)}
+.bd.ng{background:var(--ng-bg);color:var(--ng)}
+.bd.warn{background:var(--warn-bg);color:var(--warn)}
+.bd.none{background:#eef2f3;color:var(--sub)}
+.note{font-size:11px;color:var(--sub);margin-top:2px}
+
+/* 変更の記録 */
+.log{list-style:none;margin:0;padding:0;max-height:340px;overflow:auto}
+.log li{padding:8px 0;border-top:1px solid var(--line);font-size:13px;line-height:1.5}
+.log li:first-child{border-top:0}
+.log .at{font-size:11px;color:var(--sub);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.log .m{white-space:pre-wrap;word-break:break-all}
+
+/* テスト結果 */
+pre.res{background:#f7fafa;border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0 0;
+  font-size:12px;white-space:pre-wrap;word-break:break-all;display:none}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* 下に貼りつく保存バー */
+.save{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
+  padding:10px 16px;z-index:6;box-shadow:0 -2px 10px rgba(0,0,0,.05)}
+.save .in{max-width:1180px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.save select{width:auto;min-width:200px}
+.save .dirty{font-size:13px;font-weight:700;color:var(--warn)}
+.save .clean{font-size:13px;color:var(--sub)}
+.save .sp{flex:1}
+
+.msg{margin:0 0 14px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap}
+.msg.ok{background:var(--accent-bg);color:var(--accent)}
+.msg.err{background:var(--ng-bg);color:var(--ng)}
+.hide{display:none!important}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;
+  border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.login{max-width:380px;margin:40px auto}
+.banner{background:var(--ng-bg);color:var(--ng);border-radius:10px;padding:10px 14px;margin:0 0 14px;
+  font-size:13px;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>🛠 設定</h1>
+  <?!= include('nav', { navUrl: navUrl, navNow: navNow }); ?>
+</div>
+
+<div class="wrap">
+  <div id="msg" class="msg hide"></div>
+
+  <!-- ===== パスワード ===== -->
+  <div id="vPw" class="card login hide">
+    <h2>🔑 管理パスワード</h2>
+    <p class="hint">設定を変えられるのは管理者だけです。</p>
+    <input type="password" id="pw" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()">
+    <div style="margin-top:10px"><button id="btnPw" onclick="doLogin()" style="width:100%">🔓 開く</button></div>
+  </div>
+
+  <div id="loading" style="text-align:center;padding:40px;color:var(--sub)">
+    <span class="spin"></span>📥 読み込み中…
+  </div>
+
+  <!-- ===== 本体 ===== -->
+  <div id="vMain" class="hide">
+    <div id="offBanner" class="banner hide"></div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>💬 LINE WORKS で受け取る人<span class="n" id="nLw"></span></h2>
+        <p class="hint">LINE WORKS のログインID。1行に1人。<br>
+          その人の「Botとの1対1トーク」に届きます。Botの利用範囲に入っている必要があります。</p>
+        <div id="lstLw"></div>
+        <button class="sub" onclick="addRow('LW_TO_USERS')">＋ 追加</button>
+      </div>
+
+      <div class="card">
+        <h2>✉️ メールで受け取る人<span class="n" id="nMail"></span></h2>
+        <p class="hint">LINE WORKS を使っていない人（業者・院外・PC中心の人）のメールアドレス。1行に1人。<br>
+          1人ずつ別々のメールで届きます（ほかの宛先は見えません）。</p>
+        <div id="lstMail"></div>
+        <button class="sub" onclick="addRow('MAIL_TO')">＋ 追加</button>
+      </div>
+
+      <div class="card">
+        <h2>📮 メールの設定</h2>
+        <p class="hint" id="hReply"></p>
+        <input type="text" id="fReply" placeholder="↩️ 返信先（空なら送信元へ）" oninput="markDirty()">
+        <div style="margin-top:12px" id="tgMail"></div>
+      </div>
+
+      <div class="card">
+        <h2>⛔ 通知を止める</h2>
+        <p class="hint">止めている間も、記録とステータスの更新は今までどおり動きます。
+          受け取る人に一言伝えてから止めると「最近通知が来ない」の誤解を防げます。</p>
+        <div id="tgStop"></div>
+      </div>
+
+      <div class="card span2">
+        <h2>🔑 点検画面のパスワード</h2>
+        <p class="hint" id="hPw"></p>
+        <div class="li" style="max-width:420px">
+          <input type="password" id="fPw" autocomplete="new-password" spellcheck="false" oninput="markDirty()">
+          <button class="ghost" type="button" id="btnEye" onclick="toggleEye()" aria-label="パスワードを表示">👁</button>
+        </div>
+        <p class="hint" style="margin:6px 0 0">💡 4〜64文字・空白なし。管理画面のパスワードと同じにはできません。
+          変えたら、現場には新しいパスワードを伝えてください。</p>
+      </div>
+
+      <div class="card span2" id="smCard">
+        <h2>📊 月次サマリー（幹部向け・メール）</h2>
+        <p class="hint">毎月1日の朝に、先月の部署点検の実施率・点検の期限・故障・その他報告のまとめを、
+          故障通知と同じ人へメールで送ります（LINE WORKS のIDもメールアドレスの形なら、その人にメールで届きます）。</p>
+        <div id="smStatus" class="hint" style="margin:0 0 10px;color:var(--ink)"></div>
+        <div class="row">
+          <button class="sub" id="btnSmOn" onclick="summary('install')">⏰ 自動送信を設定</button>
+          <button class="sub" id="btnSmOff" onclick="summary('remove')">🧹 自動送信を外す</button>
+          <button class="sub" id="btnSmPre" onclick="summary('preview')">👀 先月分を見る</button>
+          <button class="sub" id="btnSmTest" onclick="summary('test')">🧪 先月分をテスト送信</button>
+        </div>
+        <pre class="res" id="smRes"></pre>
+      </div>
+
+      <div class="card span2">
+        <h2>🧪 テスト送信</h2>
+        <p class="hint">保存済みの設定で、受け取る人全員に1通送ります。誰に届いて誰に届かなかったかが出ます。</p>
+        <div class="row">
+          <button class="sub" id="btnTLw" onclick="testSend('lw')">💬 LINE WORKS に送る</button>
+          <button class="sub" id="btnTMail" onclick="testSend('mail')">✉️ メールで送る</button>
+          <span class="hint" id="testHint" style="margin:0"></span>
+        </div>
+        <pre class="res" id="testRes"></pre>
+      </div>
+
+      <div class="card">
+        <h2>🔌 接続の状態<span class="n">見るだけ</span></h2>
+        <p class="hint">値そのものは表示しません。変えるときはスクリプトエディタの「プロジェクトの設定」から。</p>
+        <table class="st" id="tblView"></table>
+      </div>
+
+      <div class="card">
+        <h2>📝 変更の記録<span class="n" id="nLog"></span></h2>
+        <p class="hint">この画面からの変更とテスト送信は、すべて __LOG シートに残ります。</p>
+        <ul class="log" id="lstLog"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 保存バー ===== -->
+<div class="save hide" id="saveBar">
+  <div class="in">
+    <span id="dirtyTx" class="clean">✅ 保存済み</span>
+    <span class="sp"></span>
+    <select id="fUser" onchange="rememberUser()"></select>
+    <button class="sub" id="btnUndo" onclick="undo()" disabled>↩️ 元に戻す</button>
+    <button id="btnSave" onclick="save()" disabled>💾 保存</button>
+  </div>
+</div>
+
+<script>
+var S = { token:'', data:null, cur:{}, orig:{}, dirty:false };
+var APP_URL = <?!= JSON.stringify(navUrl) ?>;
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function $(id){ return document.getElementById(id); }
+function msg(t, isErr){
+  var e = $('msg');
+  e.textContent = t;
+  e.className = 'msg ' + (isErr ? 'err' : 'ok');
+  window.scrollTo({ top:0, behavior:'smooth' });
+  clearTimeout(msg._t);
+  if (!isErr) msg._t = setTimeout(function(){ e.classList.add('hide'); }, 6000);
+}
+function busy(on, el, label){
+  if (!el) return;
+  el.disabled = on;
+  el.innerHTML = on ? '<span class="spin"></span>処理中…' : label;
+}
+function show(id){
+  ['vPw','vMain','loading'].forEach(function(x){ $(x).classList.toggle('hide', x !== id); });
+  $('saveBar').classList.toggle('hide', id !== 'vMain');
+}
+function def(key){
+  for (var i = 0; i < S.data.edit.length; i++) if (S.data.edit[i].key === key) return S.data.edit[i];
+  return null;
+}
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+
+/* ---------- 認証 ---------- */
+function tk(){ try{ return localStorage.getItem('mkdx_admin_tk') || ''; }catch(e){ return ''; } }
+function setTk(t){ S.token = t; try{ localStorage.setItem('mkdx_admin_tk', t); }catch(e){} }
+function clrTk(){ S.token=''; try{ localStorage.removeItem('mkdx_admin_tk'); }catch(e){} }
+
+window.addEventListener('DOMContentLoaded', function(){
+  var t = tk();
+  if (!t){ show('vPw'); $('pw').focus(); return; }
+  S.token = t;
+  google.script.run
+    .withSuccessHandler(function(ok){
+      if (!ok){ clrTk(); show('vPw'); return; }
+      load();
+    })
+    .withFailureHandler(function(){ clrTk(); show('vPw'); })
+    .pingToken(t, 'admin');
+});
+
+function doLogin(){
+  var el = $('btnPw'), pw = $('pw').value;
+  if (!pw){ msg('🔑 パスワードを入力してください', true); return; }
+  busy(true, el, '🔓 開く');
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '🔓 開く');
+      if (!r.ok){ msg('🙅 パスワードが違います', true); return; }
+      setTk(r.token);
+      $('pw').value = '';
+      $('msg').classList.add('hide');
+      show('loading');
+      load();
+    })
+    .withFailureHandler(function(e){ busy(false, el, '🔓 開く'); msg('⚠️ ' + e.message, true); })
+    .verifyPassword(pw, 'admin');
+}
+
+function authFail(e){
+  if (String(e && e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); msg('🔑 もう一度ログインしてください', true); return true; }
+  return false;
+}
+
+/* ---------- 読み込み ---------- */
+function load(){
+  google.script.run
+    .withSuccessHandler(function(d){
+      S.data = d;
+      S.orig = {};
+      d.edit.forEach(function(x){ S.orig[x.key] = clone(x.value); });
+      S.cur = clone(S.orig);
+      fillUsers();
+      renderAll();
+      setDirty(false);
+      show('vMain');
+    })
+    .withFailureHandler(function(e){ if (!authFail(e)) { show('vMain'); msg('⚠️ ' + e.message, true); } })
+    .apiGetSettings(S.token);
+}
+
+function fillUsers(){
+  var sel = $('fUser');
+  sel.innerHTML = '<option value="">🙋 変更する人を選ぶ</option>'
+    + S.data.users.map(function(u){
+        return '<option value="' + esc(u.id) + '">' + esc(u.name)
+             + (u.dept ? '（' + esc(u.dept) + '）' : '') + '</option>';
+      }).join('');
+  try{
+    var saved = localStorage.getItem('mkdx_admin_user') || '';
+    if (saved) sel.value = saved;
+  }catch(e){}
+}
+function rememberUser(){ try{ localStorage.setItem('mkdx_admin_user', $('fUser').value); }catch(e){} }
+
+/* ---------- 描画 ---------- */
+function renderAll(){
+  renderList('LW_TO_USERS', 'lstLw', 'nLw', 'yamada@hospital-example');
+  renderList('MAIL_TO', 'lstMail', 'nMail', 'tanaka@maker-example.co.jp');
+  $('fReply').value = S.cur.MAIL_REPLY_TO || '';
+  if (def('INSPECT_PW')){
+    $('fPw').value = S.cur.INSPECT_PW || '';
+    $('fPw').type = 'password'; $('btnEye').textContent = '👁';   // 読み込み直したら伏せ字に戻す
+    $('hPw').textContent = def('INSPECT_PW').hint;
+  }
+  $('hReply').textContent = def('MAIL_REPLY_TO').hint;
+  renderToggles('tgMail', ['MAIL_NO_LINK'], false);
+  renderToggles('tgStop', ['MAIL_OFF', 'SUMMARY_OFF', 'LW_OFF'].filter(function(k){ return !!def(k); }), true);
+  renderSummary();
+  renderView();
+  renderLog();
+  renderBanner();
+}
+
+function renderList(key, boxId, cntId, ph){
+  var arr = S.cur[key] || [];
+  var box = $(boxId);
+  if (!arr.length){
+    box.innerHTML = '<div class="empty">（まだいません）</div>';
+  } else {
+    box.innerHTML = arr.map(function(v, i){
+      return '<div class="li"><input type="text" value="' + esc(v) + '" placeholder="' + ph + '"'
+        + ' data-k="' + key + '" data-i="' + i + '" oninput="editRow(this)" autocomplete="off" spellcheck="false">'
+        + '<button class="ghost" title="この人を外す" aria-label="この人を外す" onclick="delRow(\'' + key + '\',' + i + ')">🗑</button></div>';
+    }).join('');
+  }
+  $(cntId).textContent = arr.filter(String).length + ' 人';
+  checkRows();
+}
+
+function addRow(key){
+  S.cur[key] = (S.cur[key] || []).concat(['']);
+  renderList(key, key === 'MAIL_TO' ? 'lstMail' : 'lstLw', key === 'MAIL_TO' ? 'nMail' : 'nLw',
+             key === 'MAIL_TO' ? 'tanaka@maker-example.co.jp' : 'yamada@hospital-example');
+  var ins = $(key === 'MAIL_TO' ? 'lstMail' : 'lstLw').querySelectorAll('input');
+  if (ins.length) ins[ins.length - 1].focus();
+  markDirty();
+}
+function delRow(key, i){
+  S.cur[key].splice(i, 1);
+  renderList(key, key === 'MAIL_TO' ? 'lstMail' : 'lstLw', key === 'MAIL_TO' ? 'nMail' : 'nLw',
+             key === 'MAIL_TO' ? 'tanaka@maker-example.co.jp' : 'yamada@hospital-example');
+  markDirty();
+}
+function editRow(el){
+  var key = el.getAttribute('data-k'), i = Number(el.getAttribute('data-i'));
+  S.cur[key][i] = el.value;
+  $(key === 'MAIL_TO' ? 'nMail' : 'nLw').textContent = S.cur[key].filter(function(x){ return x.trim(); }).length + ' 人';
+  checkRows();
+  markDirty();
+}
+
+// 打っている途中で、形のおかしいもの・両方に入っている人に色を付ける
+function looksMail(a){ return /^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/.test(a); }
+function checkRows(){
+  var lw = (S.cur.LW_TO_USERS || []).map(function(x){ return x.trim().toLowerCase(); });
+  document.querySelectorAll('#lstMail input').forEach(function(el){
+    var v = el.value.trim();
+    el.classList.toggle('bad', !!v && (!looksMail(v) || lw.indexOf(v.toLowerCase()) >= 0));
+  });
+  document.querySelectorAll('#lstLw input').forEach(function(el){
+    var v = el.value.trim();
+    el.classList.toggle('bad', !!v && /[\s<>"']/.test(v));
+  });
+}
+
+function renderToggles(boxId, keys, danger){
+  $(boxId).innerHTML = keys.map(function(k){
+    var d = def(k);
+    return '<div class="tg"><div class="tx"><b>' + d.icon + ' ' + esc(d.label) + '</b>'
+      + '<span>' + esc(d.hint) + '</span></div>'
+      + '<label class="sw' + (danger ? ' danger' : '') + '"><input type="checkbox" '
+      + (S.cur[k] ? 'checked ' : '') + 'onchange="flip(\'' + k + '\',this.checked)" aria-label="' + esc(d.label) + '"><i></i></label></div>';
+  }).join('');
+}
+function flip(k, on){ S.cur[k] = on; markDirty(); renderBanner(); }
+
+function renderBanner(){
+  var b = $('offBanner'), t = '';
+  if (S.orig.LW_OFF) t = '⛔ いま通知は全部止まっています（LINE WORKS もメールも）';
+  else if (S.orig.MAIL_OFF) t = '⏸ いまメールの通知だけ止まっています';
+  b.textContent = t;
+  b.classList.toggle('hide', !t);
+}
+
+function renderView(){
+  var lab = { ok:'✅ 設定あり', ng:'★ 未設定', warn:'⚠️ 未設定', none:'— 未設定' };
+  var rows = S.data.view.map(function(v){
+    return '<tr><td>' + esc(v.label) + '<div class="k">' + esc(v.key) + '</div>'
+      + (v.note ? '<div class="note">💡 ' + esc(v.note) + '</div>' : '')
+      + (v.detail ? '<div class="note">' + esc(v.detail) + '</div>' : '')
+      + '</td><td style="text-align:right"><span class="bd ' + v.state + '">'
+      + (v.state === 'ng' && v.detail ? '✖ 読めない' : lab[v.state]) + '</span></td></tr>';
+  });
+  rows.push('<tr><td>✉️ メールを今日あと送れる数</td><td style="text-align:right">'
+    + (S.data.quotaErr
+        ? '<span class="bd ng">✖ 許可なし</span><div class="note">' + esc(S.data.quotaErr) + '</div>'
+        : '<span class="bd ok">' + S.data.quota + ' 件</span>')
+    + '</td></tr>');
+  $('tblView').innerHTML = rows.join('');
+}
+
+function renderLog(){
+  var l = S.data.log || [];
+  $('nLog').textContent = l.length ? '新しい順に ' + l.length + ' 件' : '';
+  $('lstLog').innerHTML = l.length
+    ? l.map(function(x){ return '<li><div class="at">🕘 ' + esc(x.at) + '</div><div class="m">' + esc(x.msg) + '</div></li>'; }).join('')
+    : '<li class="empty">（まだ記録はありません）</li>';
+}
+
+/* ---------- 変更の有無 ---------- */
+function norm(o){
+  var x = clone(o);
+  ['LW_TO_USERS','MAIL_TO'].forEach(function(k){
+    x[k] = (x[k] || []).map(function(v){ return String(v).trim(); }).filter(String);
+  });
+  x.MAIL_REPLY_TO = String(x.MAIL_REPLY_TO || '').trim();
+  if (x.INSPECT_PW != null) x.INSPECT_PW = String(x.INSPECT_PW).trim();
+  return JSON.stringify(x);
+}
+function toggleEye(){
+  var el = $('fPw');
+  el.type = el.type === 'password' ? 'text' : 'password';
+  $('btnEye').textContent = el.type === 'password' ? '👁' : '🙈';
+}
+function markDirty(){
+  S.cur.MAIL_REPLY_TO = $('fReply').value;
+  if (def('INSPECT_PW')) S.cur.INSPECT_PW = $('fPw').value;
+  setDirty(norm(S.cur) !== norm(S.orig));
+}
+function setDirty(on){
+  S.dirty = on;
+  $('dirtyTx').className = on ? 'dirty' : 'clean';
+  $('dirtyTx').textContent = on ? '✏️ 保存していない変更があります' : '✅ 保存済み';
+  $('btnSave').disabled = !on;
+  $('btnUndo').disabled = !on;
+  $('btnTLw').disabled = on;
+  $('btnTMail').disabled = on;
+  if ($('btnSmTest')) $('btnSmTest').disabled = on;
+  $('testHint').textContent = on ? '💡 テストは保存してからできます' : '';
+}
+function undo(){
+  S.cur = clone(S.orig);
+  renderAll();
+  setDirty(false);
+}
+window.addEventListener('beforeunload', function(e){
+  if (S.dirty){ e.preventDefault(); e.returnValue = ''; }
+});
+
+/* ---------- 保存 ---------- */
+function save(){
+  var user = $('fUser').value;
+  if (!user){ msg('🙋 下の「変更する人」を選んでください（変更の記録に残します）', true); $('fUser').focus(); return; }
+  markDirty();
+  if (def('INSPECT_PW') && String(S.cur.INSPECT_PW || '').trim() !== String(S.orig.INSPECT_PW || '').trim()){
+    if (!confirm('🔑 点検画面のパスワードを変えます。\n\n'
+      + 'ログイン中のスマホは、次の操作でログイン画面に戻ります。'
+      + '現場に新しいパスワードを伝えてから変えてください。\n\nよろしいですか？')) return;
+  }
+  var el = $('btnSave');
+  busy(true, el, '💾 保存');
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '💾 保存');
+      if (!r.changed.length){ msg('ℹ️ 変わったところはありませんでした'); }
+      else { msg('✅ 保存しました\n' + r.changed.join('\n')); }
+      S.dirty = false;
+      load();
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, '💾 保存');
+      if (!authFail(e)) msg('⚠️ 保存できませんでした\n' + e.message, true);
+      setDirty(true);
+    })
+    .apiSaveSettings(S.token, { userId:user, stamp:S.data.stamp, values:S.cur });
+}
+
+/* ---------- テスト送信 ---------- */
+function testSend(kind){
+  var user = $('fUser').value;
+  if (!user){ msg('🙋 下の「変更する人」を選んでください（テスト送信も記録に残します）', true); $('fUser').focus(); return; }
+  var el = $(kind === 'lw' ? 'btnTLw' : 'btnTMail');
+  var label = kind === 'lw' ? '💬 LINE WORKS に送る' : '✉️ メールで送る';
+  busy(true, el, label);
+  var out = $('testRes');
+  out.style.display = 'none';
+  var run = google.script.run
+    .withSuccessHandler(function(t){
+      busy(false, el, label);
+      out.textContent = t;
+      out.style.display = 'block';
+      reloadLog();
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, label);
+      if (!authFail(e)){ out.textContent = '✖ ' + e.message; out.style.display = 'block'; }
+    });
+  if (kind === 'lw') run.apiTestLw(S.token, user); else run.apiTestMail(S.token, user);
+}
+
+/* ---------- 月次サマリー ---------- */
+function renderSummary(){
+  var st = S.data.summary, box = $('smStatus');
+  if (!st){
+    $('smCard').classList.add('hide');     // summary.gs がまだ入っていない
+    return;
+  }
+  $('smCard').classList.remove('hide');
+  var trig = st.trigger > 0
+    ? '✅ 自動送信：設定あり（' + esc(st.when) + '）' + (st.trigger > 1 ? '　⚠️ ' + st.trigger + '個あります。「設定」を押すと1つにまとまります' : '')
+    : (st.trigger < 0 ? '❓ 自動送信：確認できませんでした' : '★ 自動送信：未設定（「⏰ 自動送信を設定」を押してください）');
+  box.innerHTML = trig + '<br>'
+    + '✉️ 送る相手：' + (st.to.length ? st.to.length + ' 人（' + st.to.map(esc).join('、') + '）' : '<b style="color:var(--ng)">なし</b>') + '<br>'
+    + '🗓 最後に送った月：' + (st.last ? esc(st.last) : 'まだ')
+    + (S.orig.SUMMARY_OFF || S.orig.LW_OFF ? '<br><b style="color:var(--ng)">⏸ いまは止めているので、自動では送りません</b>' : '');
+  $('btnSmOff').disabled = !(st.trigger > 0);
+}
+
+function summary(act){
+  var user = $('fUser').value;
+  if (!user){ msg('🙋 下の「変更する人」を選んでください（記録に残します）', true); $('fUser').focus(); return; }
+  if (act === 'test' && !confirm('📊 先月分の月次サマリーを、送る相手全員に【テスト】として送ります。よろしいですか？')) return;
+  var ids = { install:'btnSmOn', remove:'btnSmOff', preview:'btnSmPre', test:'btnSmTest' };
+  var el = $(ids[act]), label = el.innerHTML;
+  busy(true, el, label);
+  var out = $('smRes'); out.style.display = 'none';
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, label);
+      out.textContent = r.msg; out.style.display = 'block';
+      S.data.summary = r.status;
+      renderSummary();
+      if (act !== 'preview') reloadLog();
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, label);
+      if (!authFail(e)){ out.textContent = '✖ ' + e.message; out.style.display = 'block'; }
+    })
+    .apiSummary(S.token, act, user);
+}
+
+// テストのあとは記録だけ取り直す（編集中の内容は消さない）
+function reloadLog(){
+  google.script.run
+    .withSuccessHandler(function(d){ S.data.log = d.log; S.data.quota = d.quota; S.data.quotaErr = d.quotaErr;
+                                     renderLog(); renderView(); })
+    .apiGetSettings(S.token);
+}
+</script>
+</body>
+</html>

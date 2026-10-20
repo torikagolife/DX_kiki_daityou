@@ -38,6 +38,8 @@ function doGet(e) {
   else if (page === 'ledger')  { file = 'ledgers';  title = APP_NAME + ' 台帳';     now = 'ledger'; }
   else if (page === 'history') { file = 'historys'; title = APP_NAME + ' 履歴';     now = 'history'; }
   else if (page === 'qr')      { file = 'qr';       title = APP_NAME + ' QRラベル'; now = 'qr'; }
+  else if (page === 'settings'){ file = 'settingui'; title = APP_NAME + ' 設定';    now = 'settings'; }
+  else if (page === 'report')  { file = 'reports';  title = APP_NAME + ' 帳票';     now = 'report'; }
   else                         { file = 'inspect';  title = APP_NAME;               now = 'inspect'; }
 
   const t = HtmlService.createTemplateFromFile(file);
@@ -69,18 +71,33 @@ function sign_(s) {
   return Utilities.base64EncodeWebSafe(raw);
 }
 
+// 点検用パスワードの「目印」。パスワードそのものではなく、そこから作った短い値。
+//   点検のトークンの署名に混ぜておくと、パスワードを変えた瞬間に
+//   それまでのトークンが全部通らなくなる（＝現場は全員ログインし直し）。
+//   Cloudflare 版の点検画面も、同じ目印で見分けている（cfapi.gs）
+function inspectPwVer_() {
+  const src = String(prop_('INSPECT_PW')).trim() + '|' + (prop_('TOKEN_SECRET') || 'fallback');
+  const raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, src, Utilities.Charset.UTF_8);
+  return Utilities.base64EncodeWebSafe(raw).replace(/=+$/, '').slice(0, 16);
+}
+
+// 署名する中身。点検のトークンだけ、パスワードの目印を混ぜる（トークンの形は変わらない）
+function tokenSignBody_(scope, exp) {
+  const body = scope + '.' + exp;
+  return scope === 'inspect' ? body + '.' + inspectPwVer_() : body;
+}
+
 function issueToken_(scope) {
   const exp  = Date.now() + TOKEN_DAYS * 24 * 3600 * 1000;
   const body = scope + '.' + exp;
-  return body + '.' + sign_(body);
+  return body + '.' + sign_(tokenSignBody_(scope, exp));
 }
 
 function checkToken_(token, scope) {
   const parts = String(token || '').split('.');
   if (parts.length !== 3)            throw new Error('AUTH');
-  const body = parts[0] + '.' + parts[1];
   if (parts[0] !== scope)            throw new Error('AUTH');
-  if (sign_(body) !== parts[2])      throw new Error('AUTH');
+  if (sign_(tokenSignBody_(parts[0], parts[1])) !== parts[2]) throw new Error('AUTH');
   if (Number(parts[1]) < Date.now()) throw new Error('AUTH');
   return true;
 }
@@ -111,7 +128,16 @@ function pingToken(token, scope) {
 
 function apiGetContext(token, kanriNo) {
   checkToken_(token, 'inspect');
-  return getInspectionContext(kanriNo);
+  const ctx = getInspectionContext(kanriNo);
+  // 点検期限（due.gs）。出せなくても点検はできるように、失敗は null
+  if (ctx && ctx.device) ctx.due = dueForDevice_(ctx.device.kanriNo || kanriNo);
+  return ctx;
+}
+
+// 点検画面の「期限が近い機器」（部署点検だけ。due.gs）
+function apiGetDueList(token, dept) {
+  checkTokenAny_(token);
+  return getDueList(dept);
 }
 
 function apiSubmitInspection(token, p) {
@@ -152,6 +178,53 @@ function apiGetQrLabels(token) {
   return getQrLabelData();
 }
 
+/* ---------- 帳票API（管理PW） ---------- */
+// 中身は report.gs。読むだけで、何も書き込まない
+
+function apiGetReportBase(token) {
+  checkToken_(token, 'admin');
+  return getReportBase();
+}
+
+function apiGetPlan(token, opt) {
+  checkToken_(token, 'admin');
+  return getMaintenancePlan(opt);
+}
+
+function apiGetRecords(token, opt) {
+  checkToken_(token, 'admin');
+  return getMaintenanceRecords(opt);
+}
+
+/* ---------- 設定API（管理PW） ---------- */
+// 中身は settings.gs。変えてよいプロパティだけを扱う
+
+function apiGetSettings(token) {
+  checkToken_(token, 'admin');
+  return getSettings();
+}
+
+function apiSaveSettings(token, p) {
+  checkToken_(token, 'admin');
+  return saveSettings(p);
+}
+
+function apiTestLw(token, userId) {
+  checkToken_(token, 'admin');
+  return settingsTestLw(userId);
+}
+
+function apiTestMail(token, userId) {
+  checkToken_(token, 'admin');
+  return settingsTestMail(userId);
+}
+
+// 月次サマリー（summary.gs）の自動送信の付け外し・プレビュー・テスト送信
+function apiSummary(token, act, userId) {
+  checkToken_(token, 'admin');
+  return settingsSummary(act, userId);
+}
+
 /* ---------- マスタ管理API（管理PW） ---------- */
 
 function apiGetMaster(token, name) {
@@ -173,7 +246,8 @@ function apiToggleActive(token, name, key, active) {
 
 function apiGetLedger(token) {
   checkToken_(token, 'admin');
-  return getLedger();
+  // 期限切れ・7日以内・期限が近い の目印を足す（due.gs）
+  return dueAugmentLedger_(getLedger());
 }
 
 /* ---------- 履歴API（管理PW） ---------- */

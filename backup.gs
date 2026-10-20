@@ -36,7 +36,7 @@ const BK_PREFIX = '医療機器DX台帳_';
 const BK_KEEP = 8;
 
 // xlsx をメールで送る先。空にすると、メールの代わりにフォルダへ置く
-const BK_MAIL = '';
+const BK_MAIL = 'ykubota@fff.or.jp';
 
 // フォルダに置く xlsx を何か月ぶん残すか（BK_MAIL が空のときだけ使う）
 const BK_XLSX_KEEP = 12;
@@ -226,7 +226,7 @@ function bkTrim_(folder, mime, keep) {
 
 function bkMailFail_(msg, done) {
   try {
-    const to = BK_MAIL || Session.getEffectiveUser().getEmail();
+    const to = BK_MAIL || bkOwner_();
     if (!to) return;
     MailApp.sendEmail({
       to: to,
@@ -250,6 +250,18 @@ function bkLog_(level, message) {
 }
 
 /* ---------- 小物 ---------- */
+
+// 台帳の持ち主のメールアドレス。BK_MAIL が空のときの失敗メールの送り先。
+//   Session.getEffectiveUser() は userinfo.email の権限が要るので使わない
+//   （appsscript.json のスコープを増やさずに済むように、ドライブの権限で取る）
+function bkOwner_() {
+  try {
+    const o = DriveApp.getFileById(SpreadsheetApp.getActive().getId()).getOwner();
+    return o ? o.getEmail() : '';
+  } catch (e) {
+    return '';
+  }
+}
 
 function bkStamp_() {
   return Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmm');
@@ -281,12 +293,8 @@ function backupCheck() {
   const ss = SpreadsheetApp.getActive();
 
   log.push('台帳       : ' + ss.getName());
-  try {
-    log.push('持ち主     : ' + DriveApp.getFileById(ss.getId()).getOwner().getEmail());
-  } catch (e) {
-    log.push('持ち主     : （取れません）');
-  }
-  log.push('実行者     : ' + Session.getEffectiveUser().getEmail());
+  const owner = bkOwner_();
+  log.push('持ち主     : ' + (owner || '（取れません）'));
 
   log.push('');
   log.push('保存先     : ' + BK_FOLDER);
@@ -312,6 +320,7 @@ function backupCheck() {
 
   log.push('');
   log.push('メール     : ' + (BK_MAIL || '送らない（xlsx はフォルダに置く）'));
+  log.push('失敗の連絡 : ' + (BK_MAIL || owner || '★送り先がありません（BK_MAIL を入れてください）'));
   const last = PropertiesService.getScriptProperties().getProperty('BK_LAST_XLSX');
   log.push('前回のxlsx : ' + (last ? last.slice(0, 4) + '年' + last.slice(4) + '月' : 'まだ'));
 

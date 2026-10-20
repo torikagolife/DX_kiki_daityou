@@ -10,6 +10,12 @@
  *     既に別のファイルで doPost を作っていないか、先に確認してください。
  *     （エディタの検索で「function doPost」を探す）
  *
+ *  点検画面のパスワード
+ *    Workers は自分ではパスワードを持たず、ここ（action 'login'）に確かめに来ます。
+ *    正はスクリプトプロパティ INSPECT_PW の1か所だけ。管理画面の「🛠 設定」から変えられます。
+ *    ログイン中のスマホからの呼び出しには「パスワードの目印」（pwv）が付いてくるので、
+ *    今の目印と違えば PWCHANGED を返して、ログインし直してもらいます。
+ *
  *  使い方
  *    1. スクリプトプロパティに CF_SECRET を1つ入れる
  *         長い文字列なら何でもよい。Workers 側の GAS_SECRET と同じものにする
@@ -38,6 +44,12 @@ function doPost(e) {
     return cfOut_({ error: 'AUTH' });
   }
 
+  // パスワードが変わっていたら、ログインし直してもらう
+  // （ログイン前の呼び出し＝login・jsqr には pwv が付かないので素通り）
+  if (body.pwv && String(body.pwv) !== inspectPwVer_()) {
+    return cfOut_({ error: 'PWCHANGED' });
+  }
+
   try {
     return cfOut_({ ok: true, data: cfDispatch_(body) });
   } catch (err) {
@@ -50,6 +62,14 @@ function cfDispatch_(b) {
 
   switch (b.action) {
 
+    /* ---- 点検画面のパスワード（正はスクリプトプロパティ INSPECT_PW）---- */
+    case 'login': {
+      const want = String(PropertiesService.getScriptProperties().getProperty('INSPECT_PW') || '').trim();
+      if (!want) throw new Error('点検画面のパスワード（INSPECT_PW）が設定されていません');
+      const ok = String(p.pw || '').trim() === want;
+      return ok ? { ok: true, ver: inspectPwVer_() } : { ok: false };
+    }
+
     /* ---- 疎通確認 ---- */
     case 'ping':
       return { pong: true, at: fmtDate_(today_()), app: APP_NAME };
@@ -59,8 +79,16 @@ function cfDispatch_(b) {
       return { src: cfJsqrSource_() };
 
     /* ---- 機器を1台開く ---- */
-    case 'device':
-      return getInspectionContext(p.kanriNo);
+    case 'device': {
+      const ctx = getInspectionContext(p.kanriNo);
+      // 点検期限（due.gs）。出せなくても点検はできるように、失敗は null
+      if (ctx && ctx.device) ctx.due = dueForDevice_(ctx.device.kanriNo || p.kanriNo);
+      return ctx;
+    }
+
+    /* ---- 部署ごとの「期限が近い機器」（部署点検だけ）---- */
+    case 'due':
+      return getDueList(p.dept);
 
     /* ---- 点検・故障報告 ---- */
     case 'inspect':        return submitInspection(p);
@@ -100,6 +128,8 @@ function cfApiTest() {
   const log = [];
   const sec = PropertiesService.getScriptProperties().getProperty('CF_SECRET');
   log.push('CF_SECRET : ' + (sec ? '設定あり（' + sec.length + '文字）' : '★未設定★'));
+  const ipw = PropertiesService.getScriptProperties().getProperty('INSPECT_PW');
+  log.push('INSPECT_PW: ' + (ipw ? '設定あり（点検画面はこれでログイン）' : '★未設定★（点検画面に誰も入れません）'));
 
   log.push('ping      : ' + JSON.stringify(cfDispatch_({ action: 'ping' })));
 

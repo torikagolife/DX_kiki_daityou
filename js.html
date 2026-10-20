@@ -18,6 +18,8 @@ function show(id){
     document.getElementById(v).classList.toggle('hide', v !== id);
   });
   window.scrollTo(0,0);
+  if (id === 'vDone') DUE.at = 0;          // 登録したら、期限の一覧は取り直す
+  if (id === 'vFind') dueOnFind_();        // 機器を選ぶ画面の上に、期限の近い機器を出す
 }
 function err(msg){
   var e = document.getElementById('err');
@@ -353,6 +355,7 @@ function renderDevice(){
     + '<dt>🗓 前回点検</dt><dd>'
     +   (S.ctx.lastDate ? '✅ ' + S.ctx.lastDate : '🆕 まだ記録なし') + '</dd>';
 
+  renderDue();                 // 次回予定日と、期限切れ・7日以内・期限が近い の目印
   renderUsers();
   MODE = 'inspect';
   renderTabs();
@@ -1162,5 +1165,190 @@ function nextDevice(){
   THUMB.no = ''; THUMB.url = '';
   document.getElementById('kanri').value = '';
   show('vFind');
+}
+
+/* =============================================================
+ *  点検の期限（期限切れ・7日以内・期限が近い）
+ *    ① 機器カードの中に、部署点検・業者点検の次回予定日と残り日数
+ *    ② 機器を選ぶ画面の上に、部署ごとの「期限が近い機器」（部署点検だけ）
+ *    決まり：⚠️ 7日以内／🗓 周期の4分の1（最短7日・最長60日）より内側
+ * ============================================================= */
+
+var DUE = { dept:null, data:null, at:0, open:false, busy:false };
+var DUE_SHOW = 3;          // たたんでいるときに出す件数（QRのボタンを押し下げすぎないように）
+
+function dueCss_(){
+  if (document.getElementById('dueCss')) return;
+  var st = document.createElement('style');
+  st.id = 'dueCss';
+  st.textContent =
+      '.due-box{margin:0 0 12px;display:flex;flex-direction:column;gap:6px}'
+    + '.due-row{padding:8px 12px;border-radius:10px;font-size:14px;font-weight:700;line-height:1.45}'
+    + '.due-row small{display:block;font-weight:400;font-size:12px;opacity:.85}'
+    + '.due-over{background:#fdecea;color:#b03a2e}'
+    + '.due-week{background:#fff1dc;color:#b86200}'
+    + '.due-soon{background:#fff8d6;color:#7d6400}'
+    + '.due-ok{background:var(--accent-weak);color:var(--accent);font-weight:600}'
+    + '.due-chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px}'
+    + '.due-chip{flex:1;min-width:88px;text-align:center;padding:6px 4px;border-radius:10px;font-size:12px;font-weight:700}'
+    + '.due-chip b{display:block;font-size:18px;line-height:1.2}'
+    + '.due-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;margin-top:6px;'
+    +   'border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:400;font-size:14px;color:var(--ink)}'
+    + '.due-item .tx{flex:1;min-width:0}'
+    + '.due-item .nm{font-weight:700;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.due-item .pl{font-size:12px;color:var(--sub);display:block}'
+    + '.due-tag{flex:0 0 auto;font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}'
+    + '.due-rule{font-size:11px;color:var(--sub);margin-top:8px;line-height:1.5}'
+    + '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .due-over{background:#3a1f1c;color:#f3a497}'
+    +   ':root:not([data-theme="light"]) .due-week{background:#3a2a14;color:#f2b866}'
+    +   ':root:not([data-theme="light"]) .due-soon{background:#35301a;color:#e6d27a}'
+    +   ':root:not([data-theme="light"]) .due-item{background:#0e1618}}';
+  document.head.appendChild(st);
+}
+
+function dueMd_(s){
+  var m = String(s || '').match(/^\d{4}\/(\d{2})\/(\d{2})/);
+  return m ? Number(m[1]) + '/' + Number(m[2]) : String(s || '');
+}
+
+// 1行ぶんの文面
+function dueText_(x){
+  var md = dueMd_(x.next);
+  if (x.level === 'over')
+    return { c:'over', t:'⛔ ' + x.kind + 'の期限切れ',
+             s:md + ' 予定' + (x.days !== null ? '・' + (-x.days) + '日過ぎています' : '') };
+  if (x.level === 'week')
+    return { c:'week', t:'⚠️ ' + x.kind + (x.days === 0 ? 'は今日が期限' : 'まであと' + x.days + '日'), s:md };
+  if (x.level === 'soon')
+    return { c:'soon', t:'🗓 ' + x.kind + 'まであと' + x.days + '日', s:md };
+  return { c:'ok', t:'✅ ' + x.kind + ' 次回 ' + md, s:'あと' + x.days + '日' };
+}
+
+/* ---------- ① 機器カードの中 ---------- */
+function renderDue(){
+  dueCss_();
+  var host = document.getElementById('devDue');
+  if (!host){
+    host = document.createElement('div');
+    host.id = 'devDue';
+    var docs = document.getElementById('btnDocs');
+    docs.parentNode.insertBefore(host, docs);
+  }
+  var due = S.ctx && S.ctx.due;
+  var rows = [];
+  if (due){
+    ['dept', 'maker'].forEach(function(k){
+      var x = due[k];
+      if (!x || !x.next) return;
+      // 業者点検は、目印が付いたときだけ出す（ふだんは現場に関係が薄いので）
+      if (k === 'maker' && !x.level) return;
+      var t = dueText_(x);
+      rows.push('<div class="due-row due-' + t.c + '"><span>' + esc(t.t) + '</span>'
+        + '<small>' + esc(t.s) + '</small></div>');
+    });
+  }
+  host.className = rows.length ? 'due-box' : 'hide';
+  host.innerHTML = rows.join('');
+}
+
+/* ---------- ② 機器を選ぶ画面の上 ---------- */
+function dueHost_(){
+  var host = document.getElementById('dueCard');
+  if (host) return host;
+  host = document.createElement('div');
+  host.id = 'dueCard';
+  host.className = 'card';
+  var find = document.getElementById('vFind');
+  find.insertBefore(host, find.firstChild);
+  return host;
+}
+
+function dueSavedDept_(){
+  try{ return localStorage.getItem('mkdx_due_dept') || ''; }catch(e){ return ''; }
+}
+
+// 機器を選ぶ画面が出たら呼ぶ。1分以内に取ったものがあれば使い回す
+function dueOnFind_(){
+  dueCss_();
+  if (DUE.dept === null) DUE.dept = dueSavedDept_();
+  if (DUE.data && Date.now() - DUE.at < 60000){ renderDueCard(); return; }
+  loadDue();
+}
+
+function loadDue(){
+  if (DUE.busy) return;
+  DUE.busy = true;
+  var host = dueHost_();
+  if (!DUE.data) host.innerHTML = '<p class="sub center" style="margin:0"><span class="spin"></span>🗓 点検の期限を確認中…</p>';
+  dueFetch_(DUE.dept || '', function(d){
+    DUE.busy = false;
+    DUE.data = d; DUE.at = Date.now();
+    renderDueCard();
+  }, function(){
+    DUE.busy = false;
+    host.className = 'hide';      // 出せなくても点検はできる
+  });
+}
+
+function setDueDept(v){
+  DUE.dept = v; DUE.open = false;
+  try{ localStorage.setItem('mkdx_due_dept', v); }catch(e){}
+  DUE.data = null;
+  loadDue();
+}
+
+function renderDueCard(){
+  var host = dueHost_();
+  var d = DUE.data;
+  if (!d){ host.className = 'hide'; return; }
+  host.className = 'card';
+
+  var opt = '<option value="">🏢 すべての部署</option>' + d.depts.map(function(x){
+    return '<option' + (x === DUE.dept ? ' selected' : '') + '>' + esc(x) + '</option>';
+  }).join('');
+
+  var c = d.counts;
+  var h = '<h2 style="margin-bottom:8px">🗓 点検の期限</h2>'
+    + '<select onchange="setDueDept(this.value)" aria-label="部署">' + opt + '</select>'
+    + '<div class="due-chips">'
+    +   '<div class="due-chip due-over"><b>' + c.over + '</b>⛔ 期限切れ</div>'
+    +   '<div class="due-chip due-week"><b>' + c.week + '</b>⚠️ 7日以内</div>'
+    +   '<div class="due-chip due-soon"><b>' + c.soon + '</b>🗓 期限が近い</div>'
+    + '</div>';
+
+  if (!d.items.length){
+    h += '<p class="sub center" style="margin:8px 0 0">🎉 ' + (DUE.dept ? esc(DUE.dept) + 'に' : '')
+       + '期限の近い機器はありません</p>';
+  } else {
+    var list = DUE.open ? d.items : d.items.slice(0, DUE_SHOW);
+    list.forEach(function(x){
+      var t = dueText_({ kind:'', level:x.level, days:x.days, next:x.next });
+      var tag = x.level === 'over' ? (-x.days) + '日超過'
+              : (x.days === 0 ? '今日' : 'あと' + x.days + '日');
+      h += '<button type="button" class="due-item" onclick="loadDevice(\'' + esc(x.kanriNo) + '\')">'
+        +  '<span class="tx"><span class="nm">' + esc(x.name) + '</span>'
+        +  '<span class="pl">🏷 ' + esc(x.kanriNo) + '　' + (DUE.dept ? '' : '🏢 ' + esc(x.dept) + '　')
+        +  '📦 ' + esc(x.loc) + '　🗓 ' + esc(dueMd_(x.next)) + '</span></span>'
+        +  '<span class="due-tag due-' + t.c + '">' + tag + '</span></button>';
+    });
+    if (d.items.length > DUE_SHOW){
+      h += '<button class="btn-link" onclick="DUE.open=!DUE.open;renderDueCard()">'
+        + (DUE.open ? '▲ たたむ' : '▼ ほか ' + (d.items.length - DUE_SHOW) + ' 台も見る') + '</button>';
+    }
+  }
+  h += '<div class="due-rule">👆 押すとその機器の点検画面が開きます。部署点検だけを数えています。<br>'
+    + esc(d.rule) + '</div>';
+  host.innerHTML = h;
+}
+
+// 期限の一覧を取る（GAS版）
+function dueFetch_(dept, ok, ng){
+  google.script.run
+    .withSuccessHandler(ok)
+    .withFailureHandler(function(e){
+      if (String(e && e.message).indexOf('AUTH') >= 0) { clearToken(); show('vPw'); return; }
+      ng(e);
+    })
+    .apiGetDueList(S.token, dept);
 }
 </script>

@@ -76,7 +76,7 @@ button{ font-family:inherit; cursor:pointer; }
 }
 
 /* ===================== KPI ===================== */
-#kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+#kpis{ display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:6px; }
 .kpi{
   background:#fff; border-radius:10px; padding:12px 8px; text-align:center;
   box-shadow:0 1px 4px rgba(20,40,60,.1); border:2px solid transparent;
@@ -85,8 +85,18 @@ button{ font-family:inherit; cursor:pointer; }
 .kpi .t{ font-size:11px; color:#6b7a89; margin-top:3px; font-weight:600; }
 .kpi.red .n{ color:#c0392b; }
 .kpi.warn .n{ color:#c87f0a; }
+.kpi.orange .n{ color:#d35400; }
+.kpi.yellow .n{ color:#9a7b00; }
+.kpi.red{ background:#fff5f4; }
+.kpi.orange{ background:#fff6ec; }
+.kpi.yellow{ background:#fffbe6; }
+.kpi .d{ font-size:10.5px; color:#7b8a99; margin-top:2px; }
+#dueRule{ font-size:11px; color:#7b8a99; margin:0 2px 12px; }
 .kpi.on{ border-color:#1a5d8f; background:#eaf3fa; }
 .kpi:active{ opacity:.75; }
+@media (max-width:980px){
+  #kpis{ grid-template-columns:repeat(3,1fr); }
+}
 @media (max-width:560px){
   #kpis{ grid-template-columns:repeat(2,1fr); }
   .kpi .n{ font-size:20px; }
@@ -137,6 +147,9 @@ tbody tr.st-retired{ background:#f3f4f5 !important; color:#95a2ae; }
 tbody tr.st-retired:hover{ background:#e8eaec !important; }
 
 td.over{ background:#ffe2de !important; color:#a93226; font-weight:700; }
+td.week{ background:#ffe9cc !important; color:#a04000; font-weight:700; }
+td.soon{ background:#fff5c2 !important; color:#7d6400; font-weight:700; }
+td .dd{ font-size:10.5px; font-weight:600; margin-left:4px; opacity:.9; }
 
 .pill{
   display:inline-block; padding:2px 8px; border-radius:11px;
@@ -207,7 +220,7 @@ td.docs-col{ text-align:center; padding:4px 6px; }
 
 /* ===================== 印刷 ===================== */
 @media print{
-  header .navs, .nav, .filters, .srch, #kpis, #err, .bar button,
+  header .navs, .nav, .filters, .srch, #kpis, #dueRule, #err, .bar button,
   .ov, th.docs-col, td.docs-col, #scTop { display:none !important; }
   body{ background:#fff; font-size:10px; }
   .wrap{ padding:0; }
@@ -217,7 +230,7 @@ td.docs-col{ text-align:center; padding:4px 6px; }
   table{ width:100% !important; font-size:9px; }
   thead th{ background:#14486e !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   tbody td{ white-space:normal; }
-  tbody tr,.pill,td.over{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  tbody tr,.pill,td.over,td.week,td.soon{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   @page{ size:A3 landscape; margin:8mm; }
 }
 </style>
@@ -253,6 +266,7 @@ td.docs-col{ text-align:center; padding:4px 6px; }
 <div id="vMain" class="wrap hide">
 
   <div id="kpis"></div>
+  <div id="dueRule"></div>
 
   <div class="card">
     <div class="filters">
@@ -443,6 +457,8 @@ function filtered(){
     if (cat  && r.category !== cat) return false;
     if (stat && r.status !== stat) return false;
     if (S.filter === 'over'    && !(r._overDept || r._overMaker)) return false;
+    if (S.filter === 'week'    && !(lv(r._dueDept) === 'week' || lv(r._dueMaker) === 'week')) return false;
+    if (S.filter === 'soon'    && !(lv(r._dueDept) === 'soon' || lv(r._dueMaker) === 'soon')) return false;
     if (S.filter === 'trouble' && !r._trouble) return false;
     if (S.filter === 'none'    && !r._noRecord) return false;
     if (q){
@@ -467,17 +483,34 @@ function render(){
   var over    = all.filter(function(r){ return r._overDept || r._overMaker; }).length;
   var trouble = all.filter(function(r){ return r._trouble; }).length;
   var none    = all.filter(function(r){ return r._noRecord; }).length;
+  // 期限の目印は、部署点検と業者点検を分けて数える（機器の台数は、どちらかに付いていれば1台）
+  var cnt = function(level){
+    var dep = 0, mak = 0, dev = 0;
+    all.forEach(function(r){
+      var a = level === 'over' ? !!r._overDept  : lv(r._dueDept)  === level;
+      var b = level === 'over' ? !!r._overMaker : lv(r._dueMaker) === level;
+      if (a) dep++;
+      if (b) mak++;
+      if (a || b) dev++;
+    });
+    return { n:dev, d:'部署 ' + dep + '　業者 ' + mak };
+  };
+  var cOver = cnt('over'), cWeek = cnt('week'), cSoon = cnt('soon');
   var k = [
     { f:'',        n:all.length, t:'🩺 登録機器', c:'' },
-    { f:'over',    n:over,       t:'⏰ 点検期限切れ', c:'red' },
+    { f:'over',    n:over,       t:'⛔ 点検期限切れ', c:'red',    d:cOver.d },
+    { f:'week',    n:cWeek.n,    t:'⚠️ 7日以内',     c:'orange', d:cWeek.d },
+    { f:'soon',    n:cSoon.n,    t:'🗓 期限が近い',   c:'yellow', d:cSoon.d },
     { f:'trouble', n:trouble,    t:'🔧 故障中・修理中', c:'warn' },
     { f:'none',    n:none,       t:'🆕 点検記録なし', c:'' }
   ];
   document.getElementById('kpis').innerHTML = k.map(function(x){
     return '<div class="kpi ' + x.c + (S.filter === x.f && x.f ? ' on' : '') + '" '
          + 'onclick="setFilter(\'' + x.f + '\')">'
-         + '<div class="n">' + x.n + '</div><div class="t">' + x.t + '</div></div>';
+         + '<div class="n">' + x.n + '</div><div class="t">' + x.t + '</div>'
+         + (x.d ? '<div class="d">' + x.d + '</div>' : '') + '</div>';
   }).join('');
+  document.getElementById('dueRule').textContent = S.data.dueRule ? '💡 ' + S.data.dueRule : '';
 
   var list = filtered().slice();
   var col = S.sort.col, asc = S.sort.asc ? 1 : -1;
@@ -528,12 +561,10 @@ function render(){
         var ic = { ok:'✅', ng:'🔧', rp:'🛠', ld:'📤', gy:'🗑' }[p];
         td = '<span class="pill ' + p + '">' + ic + ' ' + esc(v) + '</span>';
       } else if (c.k === 'nextDept'){
-        td = v ? esc(v) : '<span class="none">—</span>';
-        h += '<td' + (r._overDept ? ' class="over"' : '') + '>' + td + '</td>';
+        h += dueTd(v, r._overDept, r._dueDept);
         return;
       } else if (c.k === 'nextMaker'){
-        td = v ? esc(v) : '<span class="none">—</span>';
-        h += '<td' + (r._overMaker ? ' class="over"' : '') + '>' + td + '</td>';
+        h += dueTd(v, r._overMaker, r._dueMaker);
         return;
       } else if (c.k === 'years'){
         td = v ? esc(v) + '年' : '<span class="none">—</span>';
@@ -547,6 +578,23 @@ function render(){
 
   document.getElementById('tbl').innerHTML = h + '</tbody>';
   syncScroll();
+}
+
+/* ---------- 点検期限の目印 ---------- */
+// 目印（over / week / soon / ''）。サーバーが付けていなければ空
+function lv(x){ return (x && x.level) || ''; }
+
+// 次回予定日のセル。期限切れ＝赤、7日以内＝オレンジ、期限が近い＝黄色。残り日数も添える
+function dueTd(v, over, due){
+  if (!v) return '<td><span class="none">—</span></td>';
+  var level = over ? 'over' : lv(due);
+  var days = (due && due.days !== null && due.days !== undefined) ? due.days : null;
+  var note = '';
+  if (level === 'over' && days !== null) note = (-days) + '日超過';
+  else if (level === 'week') note = days === 0 ? '今日' : 'あと' + days + '日';
+  else if (level === 'soon') note = 'あと' + days + '日';
+  return '<td' + (level ? ' class="' + level + '"' : '') + '>' + esc(v)
+       + (note ? '<span class="dd">' + note + '</span>' : '') + '</td>';
 }
 
 /* ---------- 上下のスクロールバーを連動させる ---------- */

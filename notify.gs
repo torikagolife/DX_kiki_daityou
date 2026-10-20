@@ -1,7 +1,10 @@
-/*** 医療機器DX台帳 ─ LINE WORKS 通知 ********************************
+/*** 医療機器DX台帳 ─ LINE WORKS ＋ メール 通知 ************************
  *  notify.gs
  *
- *  故障まわりの出来事と、その他報告だけを、LINE WORKS のトークルームへ流します。
+ *  故障まわりの出来事と、その他報告だけを通知します。
+ *    ・LINE WORKS を使う人 → LW_TO_USERS（Botとの1対1トーク）
+ *    ・LINE WORKS を使わない人（業者・院外・PC中心の人）→ MAIL_TO（メール）
+ *  宛先で分けるので、同じ人に二重には届きません（両方に書いた人は両方に届きます）。
  *  日々の点検（ACT002）は送りません。
  *
  *    ACT005 故障報告    🔧
@@ -21,10 +24,24 @@
  *                        1人ずつ、それぞれの「Botとの1対1トーク」に届く
  *    LW_CHANNEL_ID       （任意・旧方式）LW_TO_USERS が空のときだけ、このトークルームへ送る
  *    LW_OFF              "1" を入れると通知を止める（検証中や障害時の緊急停止用）
+ *                          ※ LINE WORKS もメールも、両方止まります
+ *
+ *    ── メール（任意。空ならメールは送りません）──
+ *    MAIL_TO             送る相手のメールアドレス。カンマか改行で区切って並べる
+ *                          例）tanaka@maker-example.co.jp, jimu@hospital-example.jp
+ *                        1人ずつ別々のメールで送る（ほかの宛先は見えない）
+ *    MAIL_REPLY_TO       （任意）返信を受ける先。空なら送信元（このスクリプトの持ち主）へ返る
+ *    MAIL_NO_LINK        （任意）"1" を入れると、メール本文に管理画面へのリンクを入れない
+ *                          院外の人しかいないときに。リンクを開いてもパスワードが無いと入れません
+ *    MAIL_OFF            （任意）"1" を入れると、メールだけ止める
  *  ───────────────────────────────────────────────
  *
  *  ⚠️ ここが失敗しても、点検・故障報告の記録は必ず残ります。
  *     通知は「おまけ」として、呼び出し側で握りつぶす作りにしてあります。
+ *     LINE WORKS とメールは別々に送るので、片方が失敗してももう片方は届きます。
+ *
+ *  ⚠️ メールの送信元は、このスクリプトの持ち主のアカウントです。
+ *     1日に送れる数に上限があります（無料のGmailは宛先100件／日ほど）。
  **********************************************************************/
 
 const LW_AUTH_URL  = 'https://auth.worksmobile.com/oauth2/v2.0/token';
@@ -303,9 +320,12 @@ function lwLink_(hid) {
   }
 }
 
-function lwBuildText_(kind, info) {
+// opts.noLink : true なら管理画面へのリンクと、それに触れる行を出さない（院外向けメール用）
+// opts.dev    : 機器マスタから引いた値（呼ぶ側で引いてあれば使い回す）
+function lwBuildText_(kind, info, opts) {
+  opts = opts || {};
   const k = LW_KINDS[kind] || { icon: '📣', title: kind, lead: '' };
-  const d = lwDevice_(info.kanriNo);
+  const d = opts.dev || lwDevice_(info.kanriNo);
 
   const lines = [];
   const cat = String(info.category || '').trim();
@@ -338,16 +358,109 @@ function lwBuildText_(kind, info) {
   if (d.status) lines.push('🚦 いまのステータス : ' + d.status);
   lines.push('🕘 ' + lwNow_());
 
-  if (kind === 'ACT005' || kind === 'ACT012') {
+  const url = opts.noLink ? '' : lwLink_(info.hid);
+
+  if (url && (kind === 'ACT005' || kind === 'ACT012')) {
     lines.push('📎 写真や取説は、下のリンクから書類ボックスで見られます');
   }
 
-  const url = lwLink_(info.hid);
   if (url) {
     lines.push('');
     lines.push('▶ ' + url);
   }
   return lines.join('\n');
+}
+
+/* =============================================================
+ *  メール
+ *    LINE WORKS を使っていない人向け。本文は LINE WORKS と同じものを使い回し、
+ *    件名だけ受信箱で見分けやすい形にします。
+ * ============================================================= */
+
+const MAIL_FROM_NAME = '医療機器DX台帳';
+
+// 送る相手の一覧。区切り方は LW_TO_USERS と同じ。重複は1つ、大文字小文字は区別しない
+function mailRecipients_() {
+  const seen = {};
+  return String(lwProp_('MAIL_TO'))
+    .split(/[\s,、，;；]+/)
+    .map(function (x) { return x.trim(); })
+    .filter(function (x) {
+      if (!x) return false;
+      const k = x.toLowerCase();
+      if (seen[k]) return false;
+      seen[k] = 1;
+      return true;
+    });
+}
+
+// ざっくりした書式チェック（打ち間違いを先に弾いて、ログで分かるようにする）
+function mailLooksOk_(addr) {
+  return /^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/.test(addr);
+}
+
+// 件名。例）【故障報告】A1403 汎用輸液ポンプ ／ 【その他報告・付属品・消耗品】A1403 汎用輸液ポンプ
+function mailSubject_(kind, info, dev) {
+  const k = LW_KINDS[kind] || { title: kind };
+  const cat = String(info.category || '').trim();
+  const head = '【' + k.title + (cat ? '・' + cat : '') + '】';
+  return head + String(info.kanriNo || '') + (dev && dev.name ? ' ' + dev.name : '');
+}
+
+function mailFooter_() {
+  return '\n\n――――――――――――――\n'
+       + 'このメールは「医療機器DX台帳」から自動で送っています。\n'
+       + '心当たりがない場合は、病院の医療機器管理担当までご連絡ください。';
+}
+
+/**
+ * メールを送る。1人ずつ別々に送る（ほかの宛先が見えないように）。
+ * 1人でも届けば成功として返し、送れなかった人は __LOG に残す。
+ * 誰にも送れなかったときだけ例外にする。
+ * @return {{ok: string[], ng: Object[]}}
+ */
+function mailSendText_(subject, text) {
+  const to = mailRecipients_();
+  if (!to.length) throw new Error('MAIL_TO（送る相手）が設定されていません');
+
+  const replyTo = lwProp_('MAIL_REPLY_TO').trim();
+  const body = String(text) + mailFooter_();
+  const ok = [], ng = [];
+
+  // 残り送信数を先に見ておく（足りない分は送らずに記録する）
+  let left = Infinity;
+  try { left = MailApp.getRemainingDailyQuota(); } catch (e) { /* 見られなくても送ってみる */ }
+
+  to.forEach(function (addr) {
+    if (!mailLooksOk_(addr)) {
+      ng.push({ id: addr, why: 'メールアドレスの形になっていません' });
+      return;
+    }
+    if (left <= 0) {
+      ng.push({ id: addr, why: '今日送れる数の上限に達しました（明日になれば戻ります）' });
+      return;
+    }
+    try {
+      const o = { to: addr, subject: subject, body: body, name: MAIL_FROM_NAME };
+      if (replyTo) o.replyTo = replyTo;
+      MailApp.sendEmail(o);
+      ok.push(addr);
+      left--;
+    } catch (e) {
+      ng.push({ id: addr, why: (e && e.message ? e.message : String(e)).slice(0, 200) });
+    }
+  });
+
+  ng.forEach(function (x) {
+    lwLog_('ng', '送れなかった : ' + x.id + ' ' + x.why, 'MAIL');
+  });
+
+  if (!ok.length) {
+    throw new Error('誰にもメールを送れませんでした\n' + ng.map(function (x) {
+      return '  ' + x.id + ' : ' + x.why;
+    }).join('\n'));
+  }
+  return { ok: ok, ng: ng };
 }
 
 /* =============================================================
@@ -376,11 +489,44 @@ function notifyEvent_(kind, info) {
       return false;
     }
 
-    const r = lwSendText_(lwBuildText_(kind, info));
-    cache.put(key, '1', LW_DEDUP_SEC);
-    lwLog_('ok', kind + ' ' + info.kanriNo + ' 送信 ' + r.ok.length + '人'
-                 + (r.ng.length ? '（届かなかった ' + r.ng.length + '人）' : ''));
-    return true;
+    const useLw   = !!(lwRecipients_().length || lwProp_('LW_CHANNEL_ID'));
+    const useMail = lwProp_('MAIL_OFF') !== '1' && mailRecipients_().length > 0;
+    if (!useLw && !useMail) {
+      lwLog_('ng', kind + ' ' + info.kanriNo + ' 送る相手が設定されていません（LW_TO_USERS / MAIL_TO）');
+      return false;
+    }
+
+    const dev = lwDevice_(info.kanriNo);   // 機器マスタは1回だけ引いて両方で使う
+    let sent = false;
+
+    // ① LINE WORKS（失敗してもメールへ進む）
+    if (useLw) {
+      try {
+        const r = lwSendText_(lwBuildText_(kind, info, { dev: dev }));
+        sent = true;
+        lwLog_('ok', kind + ' ' + info.kanriNo + ' 送信 ' + r.ok.length + '人'
+                     + (r.ng.length ? '（届かなかった ' + r.ng.length + '人）' : ''));
+      } catch (e) {
+        lwLog_('ng', kind + ' ' + info.kanriNo + ' ' + (e && e.message ? e.message : e));
+      }
+    }
+
+    // ② メール
+    if (useMail) {
+      try {
+        const text = lwBuildText_(kind, info, { dev: dev, noLink: lwProp_('MAIL_NO_LINK') === '1' });
+        const r = mailSendText_(mailSubject_(kind, info, dev), text);
+        sent = true;
+        lwLog_('ok', kind + ' ' + info.kanriNo + ' メール ' + r.ok.length + '人'
+                     + (r.ng.length ? '（送れなかった ' + r.ng.length + '人）' : ''), 'MAIL');
+      } catch (e) {
+        lwLog_('ng', kind + ' ' + info.kanriNo + ' ' + (e && e.message ? e.message : e), 'MAIL');
+      }
+    }
+
+    // どちらか1つでも届いたら連打抑制をかける（全滅なら次の押し直しで再挑戦できるように）
+    if (sent) cache.put(key, '1', LW_DEDUP_SEC);
+    return sent;
 
   } catch (e) {
     // ここで握りつぶすのが肝心。通知のせいで故障報告が失敗したら本末転倒
@@ -392,14 +538,16 @@ function notifyEvent_(kind, info) {
 /* ---------- 記録 ---------- */
 
 // __LOG シートがあれば1行足す。無ければ実行ログだけに出す
-function lwLog_(level, message) {
-  const line = '[LW:' + level + '] ' + message;
+// via : 'LINEWORKS'（省略時）か 'MAIL'
+function lwLog_(level, message, via) {
+  via = via || 'LINEWORKS';
+  const line = '[' + (via === 'MAIL' ? 'MAIL' : 'LW') + ':' + level + '] ' + message;
   try {
     Logger.log(line);
   } catch (e) { /* 気にしない */ }
   try {
     const sh = SpreadsheetApp.getActive().getSheetByName('__LOG');
-    if (sh) sh.appendRow([new Date(), 'LINEWORKS', level, message]);
+    if (sh) sh.appendRow([new Date(), via, level, message]);
   } catch (e) { /* 書けなくても通知の本筋には関係ない */ }
 }
 
@@ -448,7 +596,91 @@ function lwCheck() {
 
   log.push('');
   log.push('停止フラグ LW_OFF : ' + (lwProp_('LW_OFF') === '1' ? 'オン（送りません）' : 'オフ'));
+
+  // メール側もひと目で分かるように
+  log.push('');
+  log.push(mailCheckText_());
   Logger.log(log.join('\n'));
+}
+
+/* ---------- メールの動作確認 ---------- */
+
+function mailCheckText_() {
+  const log = [];
+  const to = mailRecipients_();
+  if (to.length) {
+    log.push('メールの相手 MAIL_TO : ' + to.length + ' 人（1人ずつ別々のメール）');
+    to.forEach(function (a) {
+      log.push('  ・' + a + (mailLooksOk_(a) ? '' : '　★アドレスの形になっていません★'));
+    });
+    const lwTo = lwRecipients_().map(function (u) { return u.toLowerCase(); });
+    const both = to.filter(function (a) { return lwTo.indexOf(a.toLowerCase()) >= 0; });
+    if (both.length) {
+      log.push('  ※ LW_TO_USERS にもいる人 : ' + both.join(', ') + '（二重に届きます）');
+    }
+  } else {
+    log.push('メールの相手 MAIL_TO : なし（メールは送りません）');
+  }
+  log.push('  返信先 MAIL_REPLY_TO : ' + (lwProp_('MAIL_REPLY_TO') || '（空 → 送信元へ返る）'));
+  log.push('  リンク MAIL_NO_LINK  : ' + (lwProp_('MAIL_NO_LINK') === '1' ? '入れない' : '入れる'));
+  log.push('  停止   MAIL_OFF      : ' + (lwProp_('MAIL_OFF') === '1' ? 'オン（メールだけ送りません）' : 'オフ'));
+  try {
+    log.push('  今日あと送れる数     : ' + MailApp.getRemainingDailyQuota() + ' 件');
+  } catch (e) {
+    log.push('  今日あと送れる数     : 確認できませんでした（メール送信の許可がまだかもしれません）');
+  }
+  return log.join('\n');
+}
+
+// ⑤ メールの設定だけ確認する（送りません）
+function mailCheck() {
+  Logger.log(mailCheckText_());
+}
+
+// ⑥ MAIL_TO の全員へテストメールを1通送る
+function mailSendTest() {
+  try {
+    const r = mailSendText_('【テスト】医療機器DX台帳の通知テスト',
+      '🧪 医療機器DX台帳のテスト送信です。\n'
+      + 'これが届いていれば、メール通知の準備は整っています。\n'
+      + '🕘 ' + lwNow_());
+    Logger.log(mailResultText_(r));
+  } catch (e) {
+    Logger.log('✖ ' + e.message);
+  }
+}
+
+// ⑦ 本番と同じ件名・本文でメールを送ってみる（機器マスタの1台目を使います）
+function mailPreviewTest() {
+  let no = 'A0001';
+  try {
+    const d = getTable(SHEET.DEV, { fresh: true }).rows[0];
+    if (d) no = String(d['管理番号']);
+  } catch (e) { /* 既定のまま */ }
+
+  const info = { kanriNo: no, hid: 'HIS9999', userId: '',
+                 text: '（テスト）カフの加圧が安定しない', memo: '' };
+  const dev = lwDevice_(no);
+  const subject = mailSubject_('ACT005', info, dev);
+  const text = lwBuildText_('ACT005', info, { dev: dev, noLink: lwProp_('MAIL_NO_LINK') === '1' });
+  Logger.log('--- 件名 ---\n' + subject + '\n--- 本文 ---\n' + text + mailFooter_());
+
+  try {
+    Logger.log('\n' + mailResultText_(mailSendText_(subject, text)));
+  } catch (e) {
+    Logger.log('\n✖ ' + e.message);
+  }
+}
+
+function mailResultText_(r) {
+  const log = ['✅ 送った : ' + r.ok.length + ' 人'];
+  r.ok.forEach(function (a) { log.push('    ' + a); });
+  if (r.ng.length) {
+    log.push('✖ 送れなかった : ' + r.ng.length + ' 人');
+    r.ng.forEach(function (x) { log.push('    ' + x.id + ' : ' + x.why); });
+  }
+  log.push('※「送った」はGoogleが受け付けたという意味です。迷惑メールに入っていないか、相手にも確認してください');
+  return log.join('\n');
 }
 
 // ② トークンまで取れるか（まだ送りません）
