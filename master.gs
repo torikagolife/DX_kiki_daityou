@@ -6,6 +6,7 @@
 // 画面に出すマスタの定義。ここに足せば画面にタブが増える
 //   type: id=自動採番 / text=自由入力 / ref=他マスタ参照 / fv=refの名前（自動）
 //         select=選択肢 / order=表示順 / active=有効フラグ / num=数値 / date=日付
+//         ro=画面では見るだけ（保存しても変わらない。note に理由を書く）
 //   icon: タブとダイアログのタイトルに出す絵文字
 const MASTERS = {
   dev: {
@@ -42,13 +43,13 @@ const MASTERS = {
   user: {
     sheet: SHEET.USR, key: '職員番号', label: 'ユーザー', icon: '👤',
     idGen: null,
-    listCols: ['職員番号', 'ユーザー名', '部署名', '権限'],
+    listCols: ['職員番号', 'ユーザー名', '部署名'],
     fields: [
       { col: '職員番号',   type: 'text',   required: true, pk: true },
       { col: 'ユーザー名', type: 'text',   required: true },
       { col: '部署ID',     type: 'ref',    required: true, ref: 'dept' },
       { col: '部署名',     type: 'fv' },
-      { col: '権限',       type: 'select', options: ['一般', '管理者'] },
+      // 「権限」列はやめた（画面の入口はパスワードで分けているため、何にも効いていなかった）
       { col: '有効',       type: 'active' },
       { col: '備考',       type: 'text' }
     ]
@@ -57,12 +58,11 @@ const MASTERS = {
   dept: {
     sheet: SHEET.DEPT, key: '部署ID', label: '部署', icon: '🏢',
     idGen: { prefix: 'DEP', digits: 3 },
-    listCols: ['部署ID', '部署名', '担当者１', '担当者２'],
+    listCols: ['部署ID', '部署名'],
     fields: [
       { col: '部署ID',   type: 'id',   pk: true },
       { col: '部署名',   type: 'text', required: true },
-      { col: '担当者１', type: 'text' },
-      { col: '担当者２', type: 'text' },
+      // 「担当者１・２」列はやめた（人の情報はユーザーマスタ1か所に持つ）
       { col: '表示順',   type: 'order' },
       { col: '有効',     type: 'active' },
       { col: '備考',     type: 'text' }
@@ -123,11 +123,13 @@ const MASTERS = {
   chk: {
     sheet: SHEET.CHK, key: '点検表ID', label: '点検表', icon: '📋',
     idGen: { prefix: 'CHK', digits: 3 },
-    listCols: ['点検表ID', '点検表名', '点検区分'],
+    listCols: ['点検表ID', '点検表名', '機器区分ID', '点検区分'],
     fields: [
       { col: '点検表ID',   type: 'id',     pk: true },
       { col: '点検表名',   type: 'text',   required: true },
-      { col: '機器区分ID', type: 'ref',    ref: 'cat' },
+      // 正は機器区分マスタの「点検表ID」。こちらはそれに合わせて自動で入る（syncChkCat_）
+      { col: '機器区分ID', type: 'ro',
+        note: '機器区分マスタで、この点検表を選んだ区分のIDが自動で入ります' },
       { col: '点検区分',   type: 'select', options: ['部署点検', '業者点検'] },
       { col: '表示順',     type: 'order' },
       { col: '有効',       type: 'active' },
@@ -159,8 +161,11 @@ const MASTERS = {
     fields: [
       { col: 'アクションID',   type: 'id',   pk: true },
       { col: 'アクション名',   type: 'text', required: true },
-      { col: 'ステータス更新', type: 'text' },
-      { col: '点検日更新',     type: 'text' },
+      // 実際の動きはコード（action.gs の ACTION_FORM）が決めている。ここは説明のための列
+      { col: 'ステータス更新', type: 'ro',
+        note: '実際の動きはプログラムで決まっています。ここを書き換えても動きは変わりません' },
+      { col: '点検日更新',     type: 'ro',
+        note: '同上。最終点検日は機器マスタには持たず、台帳ビューが履歴から計算します' },
       { col: '有効',           type: 'active' },
       { col: '備考',           type: 'text' }
     ]
@@ -289,6 +294,13 @@ function saveMaster(p) {
 
   // 機器マスタは履歴も書くので専用処理へ回す
   if (m.special === 'device') {
+    // 保管場所はどこかの部署に属している。機器の部署と食い違う組み合わせは止める
+    let cur = null;
+    if (!isNewRec) cur = findRow(SHEET.DEV, '管理番号', String(p.key), { fresh: true });
+    const deptId = String(v['部署ID'] !== undefined ? v['部署ID'] : (cur ? cur['部署ID'] : '')).trim();
+    const locId  = String(v['保管場所ID'] !== undefined ? v['保管場所ID'] : (cur ? cur['保管場所ID'] : '')).trim();
+    assertLocDept_(deptId, locId);
+
     if (isNewRec) {
       const r = registerDevice({ values: v, userId: p.userId, introDate: p.introDate });
       // ここは変更なし（コピーも新規登録と同じ扱い）
@@ -322,7 +334,7 @@ function saveMaster(p) {
     for (let i = 0; i < m.fields.length; i++) {
       const f = m.fields[i];
       if (f.pk) continue;
-      if (f.type === 'fv' || f.type === 'status') continue;
+      if (f.type === 'fv' || f.type === 'status' || f.type === 'ro') continue;
       if (f.type === 'active') {
         rec[f.col] = (String(v[f.col]) === 'false') ? '' : ACTIVE;
       } else if (f.type === 'order') {
@@ -357,6 +369,8 @@ function saveMaster(p) {
     }
 
     refreshAllFv();
+    // 機器区分の点検表を変えたら、点検表マスタの「機器区分ID」も合わせる
+    if (p.name === 'cat' || p.name === 'chk') syncChkCat_();
     return { key: rec[m.key], isNew: isNew };
   });
 }
@@ -370,6 +384,60 @@ function toggleMasterActive(name, key, active) {
   });
   if (!ok) throw new Error('対象が見つかりません: ' + key);
   return { key: String(key), active: !!active };
+}
+
+/* ---------- 整合性のチェック ---------- */
+
+/**
+ * 保管場所が、その部署のものかを確かめる。違えば止める。
+ * 機器マスタの保存と、アクション登録の「移設」から呼ぶ。
+ */
+function assertLocDept_(deptId, locId) {
+  deptId = String(deptId || '').trim();
+  locId  = String(locId  || '').trim();
+  if (!deptId || !locId) return;
+  const loc = findRow(SHEET.LOC, '保管場所ID', locId, { fresh: true });
+  if (!loc) throw new Error('保管場所が見つかりません: ' + locId);
+  const owner = String(loc['部署ID'] || '').trim();
+  if (owner && owner !== deptId) {
+    const dep = findRow(SHEET.DEPT, '部署ID', deptId, { fresh: true });
+    throw new Error('保管場所「' + String(loc['保管場所名'] || locId) + '」は「'
+      + String(loc['部署名'] || owner) + '」の場所です。'
+      + '部署を「' + String(loc['部署名'] || owner) + '」にするか、'
+      + (dep ? '「' + String(dep['部署名'] || deptId) + '」の' : '') + '保管場所を選び直してください');
+  }
+}
+
+/**
+ * 点検表マスタの「機器区分ID」を、機器区分マスタの「点検表ID」に合わせる。
+ *   正は機器区分マスタ（どの区分がどの点検表を使うか）。
+ *   1つの点検表を複数の区分で使っているときは、いちばん若い区分IDを入れる。
+ *   どの区分からも使われていない点検表は空にする。
+ * 変わった行だけ書き換える。エディタから実行してもよい。
+ * @return {number} 書き換えた行数
+ */
+function syncChkCat_() {
+  const want = {};
+  getTable(SHEET.CAT, { fresh: true }).rows.forEach(function (c) {
+    const chk = String(c['点検表ID'] || '').trim();
+    const cat = String(c['機器区分ID'] || '').trim();
+    if (!chk || !cat) return;
+    if (!want[chk] || cat < want[chk]) want[chk] = cat;
+  });
+  let n = 0;
+  getTable(SHEET.CHK, { fresh: true }).rows.forEach(function (r) {
+    const id = String(r['点検表ID'] || '').trim();
+    if (!id) return;
+    const now = String(r['機器区分ID'] || '').trim();
+    const to = want[id] || '';
+    if (now !== to) { updateRow(SHEET.CHK, '点検表ID', id, { '機器区分ID': to }); n++; }
+  });
+  return n;
+}
+
+// エディタから1回だけ実行する用（ずれていないかの確認と修正）
+function syncCheckSheetCategory() {
+  Logger.log('点検表マスタの機器区分IDを ' + syncChkCat_() + ' 行直しました');
 }
 
 /* ---------- 補助 ---------- */

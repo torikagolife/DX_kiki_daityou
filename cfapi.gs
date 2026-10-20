@@ -104,6 +104,7 @@ function cfDispatch_(b) {
     case 'files':   return listFiles(p.kanriNo);
     case 'file':    return getFileData(p.fileId);
     case 'upload':  return uploadFile(p);
+    case 'preview': return getFilePreview(p.fileId);     // 書類ボックスの写真のサムネイル（preview.gs）
 
     /* ---- 代表写真 ---- */
     case 'thumb':   return getThumb(p.kanriNo);

@@ -244,6 +244,12 @@ function apiToggleActive(token, name, key, active) {
 
 /* ---------- 台帳ビューAPI（管理PW） ---------- */
 
+// 台帳ビューを Excel で書き出す（ledgerxlsx.gs）
+function apiExportLedger(token, p) {
+  checkToken_(token, 'admin');
+  return exportLedgerXlsx(p);
+}
+
 function apiGetLedger(token) {
   checkToken_(token, 'admin');
   // 期限切れ・7日以内・期限が近い の目印を足す（due.gs）
@@ -305,6 +311,12 @@ function apiGetFile(token, fileId) {
 function apiUploadFile(token, p) {
   checkTokenAny_(token);
   return uploadFile(p);
+}
+
+// 書類ボックスの写真のサムネイル（preview.gs）。見るのは現場でもできる
+function apiGetFilePreviews(token, ids) {
+  checkTokenAny_(token);
+  return getFilePreviews(ids);
 }
 
 function apiDeleteFile(token, fileId) {

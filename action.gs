@@ -146,6 +146,7 @@ function submitAction(p) {
     newDeptId = String(p.newDeptId || '').trim();
     newLocId  = String(p.newLocId  || '').trim();
     if (!newDeptId || !newLocId) throw new Error('移設先の部署と保管場所を選択してください');
+    assertLocDept_(newDeptId, newLocId);          // 保管場所がその部署のものか（master.gs）
   }
 
   // ステータス

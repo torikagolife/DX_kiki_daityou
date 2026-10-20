@@ -22,8 +22,14 @@
  *
  *    GAS_URL      GASウェブアプリのURL（…/exec まで）
  *    GAS_SECRET   GAS側のスクリプトプロパティ CF_SECRET と同じ文字列
- *    INSPECT_PW   点検画面のパスワード。現場共通
  *    TOKEN_SECRET ログインの署名鍵。長い文字列なら何でもよい
+ *
+ *  点検画面のパスワードは、GAS側のスクリプトプロパティ INSPECT_PW だけを見ます。
+ *  （管理画面の「🛠 設定」から変えられる。Workers 側で持つ必要はない）
+ *  パスワードを変えると、ログイン中のスマホは次の操作でログイン画面に戻ります。
+ *
+ *    INSPECT_PW   （任意・移行用）GAS側の cfapi.gs がまだ古く、パスワードを
+ *                 確かめられないときだけ使う控え。新しい cfapi.gs を入れたら消してよい
  *
  *  任意（Type は Text でよい）
  *    APP_NAME     画面の見出し。省略すると「医療機器DX台帳」
@@ -44,8 +50,8 @@ function json(data, status = 200, headers = {}) {
     headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
   });
 }
-function err(message, status = 400) {
-  return json({ error: message }, status);
+function err(message, status = 400, headers = {}) {
+  return json({ error: message }, status, headers);
 }
 
 // GASが返してきたエラー。画面にそのまま出してよいもの
@@ -74,26 +80,34 @@ function sameSecret(a, b) {
   return diff === 0;
 }
 
-async function issueToken(env) {
+// トークン = inspect.期限.パスワードの目印.署名
+//   「パスワードの目印」は GAS が INSPECT_PW から作る短い値（パスワードそのものではない）。
+//   GASへ取り次ぐたびにこれを添え、GAS側で今の目印と違えば（＝パスワードが変わっていれば）
+//   ログインし直してもらう
+async function issueToken(env, ver) {
   const exp = Date.now() + TOKEN_DAYS * 86400 * 1000;
-  const body = 'inspect.' + exp;
+  const body = 'inspect.' + exp + '.' + String(ver || '-');
   return body + '.' + await sign_(env.TOKEN_SECRET, body);
 }
 
+// ログインしていれば { ver } を返す。していなければ null
 async function loggedIn(env, request) {
   let raw = '';
   const m = (request.headers.get('cookie') || '').match(
     new RegExp('(?:^|;\\s*)' + COOKIE + '=([^;]+)'));
   if (m) raw = decodeURIComponent(m[1]);
-  if (!raw) return false;
+  if (!raw) return null;
 
   const parts = raw.split('.');
-  if (parts.length !== 3) return false;
-  const [scope, exp, sig] = parts;
-  if (scope !== 'inspect') return false;
-  if (Number(exp) < Date.now()) return false;
-  return sameSecret(await sign_(env.TOKEN_SECRET, scope + '.' + exp), sig);
+  if (parts.length !== 4) return null;        // 前の形（3つ）のトークンは、1度だけログインし直し
+  const [scope, exp, ver, sig] = parts;
+  if (scope !== 'inspect') return null;
+  if (Number(exp) < Date.now()) return null;
+  const good = sameSecret(await sign_(env.TOKEN_SECRET, scope + '.' + exp + '.' + ver), sig);
+  return good ? { ver: ver } : null;
 }
+
+const CLEAR_COOKIE = COOKIE + '=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax';
 
 function cookieHeader(token) {
   return COOKIE + '=' + encodeURIComponent(token) +
@@ -104,16 +118,24 @@ function cookieHeader(token) {
  *  GASへの取り次ぎ
  * ===================================================================== */
 
-async function callGas(env, action, payload) {
+// パスワードが変わっていた（GASが PWCHANGED を返した）
+class PwChanged extends Error {}
+
+// pwv : ログイン中のトークンに入っている「パスワードの目印」。
+//       渡すとGAS側で今の目印と照らし、違えば PwChanged になる
+async function callGas(env, action, payload, pwv) {
   if (!env.GAS_URL)    throw new Error('GAS_URL が設定されていません');
   if (!env.GAS_SECRET) throw new Error('GAS_SECRET が設定されていません');
+
+  const body = { secret: env.GAS_SECRET, action, payload: payload || {} };
+  if (pwv) body.pwv = pwv;
 
   const res = await fetch(env.GAS_URL, {
     method: 'POST',
     // GASは Content-Type を見ないので text/plain にしておく。
     // application/json にすると、ブラウザ以外からでも余計な手間が増える
     headers: { 'content-type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ secret: env.GAS_SECRET, action, payload: payload || {} }),
+    body: JSON.stringify(body),
     redirect: 'follow',
   });
 
@@ -131,6 +153,7 @@ async function callGas(env, action, payload) {
       'GASからJSONが返りませんでした。デプロイの「アクセスできるユーザー」が' +
       '「全員」になっているか、GAS_URL が /exec で終わっているか確認してください。');
   }
+  if (out.error === 'PWCHANGED') throw new PwChanged('AUTH');
   if (out.error) throw new GasError(out.error === 'AUTH'
     ? 'GAS_SECRET と、GAS側のCF_SECRETが一致していません' : out.error);
   return out.data;
@@ -165,6 +188,8 @@ export default {
       if (path.startsWith('/api/')) return await handleApi(request, env, url, path);
       return new Response('Not Found', { status: 404 });
     } catch (e) {
+      // パスワードが変わった → クッキーを消してログイン画面へ
+      if (e instanceof PwChanged) return err('AUTH', 401, { 'set-cookie': CLEAR_COOKIE });
       // GASが「管理番号が見つかりません」などを返しただけのときは、
       // こちらの不具合ではないので 400 にして、文面だけ画面へ渡す
       return err((e && e.message) ? e.message : String(e),
@@ -279,84 +304,114 @@ async function handleApi(request, env, url, path) {
   if (path === '/api/login' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     await new Promise((r) => setTimeout(r, 400));     // 総当たり対策のささやかな遅延
-    if (!env.INSPECT_PW ||
-        !sameSecret(String(b.pw || '').trim(), String(env.INSPECT_PW).trim())) {
-      return json({ ok: false }, 401);
+    const pw = String(b.pw || '').trim();
+    if (!pw) return json({ ok: false }, 401);
+
+    // パスワードはGASに確かめてもらう（GASのスクリプトプロパティ INSPECT_PW が正）
+    let r;
+    try {
+      r = await callGas(env, 'login', { pw: pw });
+    } catch (e) {
+      // GAS側の cfapi.gs がまだ古い（login を知らない）ときだけ、Workers の控えで照合する
+      if (e instanceof GasError && /知らない操作/.test(e.message) && env.INSPECT_PW) {
+        if (!sameSecret(pw, String(env.INSPECT_PW).trim())) return json({ ok: false }, 401);
+        return json({ ok: true }, 200, { 'set-cookie': cookieHeader(await issueToken(env, '-')) });
+      }
+      throw e;
     }
-    return json({ ok: true }, 200, { 'set-cookie': cookieHeader(await issueToken(env)) });
+    if (!r || !r.ok) return json({ ok: false }, 401);
+    return json({ ok: true }, 200, { 'set-cookie': cookieHeader(await issueToken(env, r.ver)) });
   }
 
   if (path === '/api/logout' && method === 'POST') {
-    return json({ ok: true }, 200, {
-      'set-cookie': COOKIE + '=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax',
-    });
+    return json({ ok: true }, 200, { 'set-cookie': CLEAR_COOKIE });
   }
 
-  const ok = await loggedIn(env, request);
-  if (path === '/api/me') return json({ ok });
-  if (!ok) return err('AUTH', 401);
+  const me = await loggedIn(env, request);
+  if (path === '/api/me') return json({ ok: !!me });
+  if (!me) return err('AUTH', 401);
+
+  // ここから先のGAS呼び出しには、パスワードの目印を添える
+  //   移行用の控えでログインした人（目印が '-'）も、新しい cfapi.gs が入った時点でログインし直しになる
+  const gas = (action, payload) => callGas(env, action, payload, me.ver);
 
   const seg = path.split('/').filter(Boolean);        // ['api', ...]
 
   // ---- 疎通確認。つながらないときはここを開くと原因が出る ----
   if (path === '/api/ping') {
-    return json(await callGas(env, 'ping'));
+    return json(await gas('ping'));
+  }
+
+  // ---- 部署ごとの「期限が近い機器」（部署点検だけ）----
+  if (path === '/api/due' && method === 'GET') {
+    return json(await gas('due', { dept: url.searchParams.get('dept') || '' }));
   }
 
   // ---- 機器を1台開く ----
   if (seg[1] === 'device' && method === 'GET') {
-    return json(await callGas(env, 'device',
+    return json(await gas('device',
       { kanriNo: decodeURIComponent(seg[2] || '') }));
   }
 
   // ---- 点検・故障報告 ----
   if (path === '/api/inspection' && method === 'POST') {
-    return json(await callGas(env, 'inspect', await request.json()));
+    return json(await gas('inspect', await request.json()));
   }
   if (path === '/api/trouble' && method === 'POST') {
-    return json(await callGas(env, 'trouble', await request.json()));
+    return json(await gas('trouble', await request.json()));
   }
   if (seg[1] === 'history' && seg[3] === 'inspection' && method === 'PUT') {
     const p = await request.json();
     p.hid = decodeURIComponent(seg[2]);
-    return json(await callGas(env, 'updateInspect', p));
+    return json(await gas('updateInspect', p));
   }
   if (seg[1] === 'history' && seg[3] === 'trouble' && method === 'PUT') {
     const p = await request.json();
     p.hid = decodeURIComponent(seg[2]);
-    return json(await callGas(env, 'updateTrouble', p));
+    return json(await gas('updateTrouble', p));
   }
 
   // ---- その他報告（ステータスは変えない）----
   if (path === '/api/other' && method === 'POST') {
-    return json(await callGas(env, 'other', await request.json()));
+    return json(await gas('other', await request.json()));
   }
   if (seg[1] === 'history' && seg[3] === 'other' && method === 'PUT') {
     const p = await request.json();
     p.hid = decodeURIComponent(seg[2]);
-    return json(await callGas(env, 'updateOther', p));
+    return json(await gas('updateOther', p));
   }
 
   // ---- 書類 ----
   if (seg[1] === 'files' && method === 'GET') {
-    return json(await callGas(env, 'files',
+    return json(await gas('files',
       { kanriNo: decodeURIComponent(seg[2] || '') }));
   }
   if (path === '/api/upload' && method === 'POST') {
-    return json(await callGas(env, 'upload', await request.json()));
+    return json(await gas('upload', await request.json()));
   }
 
   // GASからはbase64で受け取るが、ブラウザへは普通のファイルとして返す。
   // こうしておくと、リンクをそのまま開けるし <img src> でも使える
   if (seg[1] === 'file' && method === 'GET') {
-    const d = await callGas(env, 'file', { fileId: decodeURIComponent(seg[2] || '') });
+    const d = await gas('file', { fileId: decodeURIComponent(seg[2] || '') });
     return binary(d.data, d.mime, d.name, url.searchParams.get('dl') === '1');
+  }
+
+  // ---- 書類ボックスの写真のサムネイル。無ければ404（画面は 🖼 のまま）----
+  if (seg[1] === 'fpv' && method === 'GET') {
+    let d = null;
+    try { d = await gas('preview', { fileId: decodeURIComponent(seg[2] || '') }); }
+    catch (e) { d = null; }
+    if (!d || !d.ok || !d.dataUrl) return new Response('', { status: 404 });
+    const m = String(d.dataUrl).match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) return new Response('', { status: 404 });
+    return binary(m[2], m[1], 'preview', false, 'private, max-age=21600');
   }
 
   // ---- 代表写真。無ければ404を返して、画面側は黙って隠す ----
   if (seg[1] === 'thumb' && method === 'GET') {
     let d = null;
-    try { d = await callGas(env, 'thumb', { kanriNo: decodeURIComponent(seg[2] || '') }); }
+    try { d = await gas('thumb', { kanriNo: decodeURIComponent(seg[2] || '') }); }
     catch (e) { d = null; }
     if (!d || !d.ok || !d.dataUrl) return new Response('', { status: 404 });
 
@@ -688,6 +743,8 @@ function show(id){
     document.getElementById(v).classList.toggle('hide', v !== id);
   });
   window.scrollTo(0,0);
+  if (id === 'vDone') DUE.at = 0;          // 登録したら、期限の一覧は取り直す
+  if (id === 'vFind') dueOnFind_();        // 機器を選ぶ画面の上に、期限の近い機器を出す
 }
 function err(msg){
   var e = document.getElementById('err');
@@ -980,6 +1037,8 @@ function renderDevice(){
     + '<dt>🗓 前回点検</dt><dd>'
     +   (S.ctx.lastDate ? '✅ ' + S.ctx.lastDate : '🆕 まだ記録なし') + '</dd>';
 
+  renderDue();                 // 次回予定日と、期限切れ・7日以内・期限が近い の目印
+
   // 代表写真。無い機器では 404 が返るので、その場で枠ごと消す
   var host = document.getElementById('devThumbHost');
   host.className = 'hide';
@@ -1074,25 +1133,72 @@ function renderDocs(){
       + '🗒 この機器の書類はまだ登録されていません。</p>';
     return;
   }
-  var h = '', lastKind = '';
-  S.files.forEach(function(f){
-    if (f.kind !== lastKind){
-      h += '<div class="doc-kind">' + esc(f.kind) + '</div>';
-      lastKind = f.kind;
+  pvCss_();
+  // 種別ごとに、写真はタイル・それ以外は一覧。
+  // Workers が普通のファイルとして返すので、どちらもリンクで開ける
+  var h = '', i = 0;
+  while (i < S.files.length){
+    var kind = S.files[i].kind, imgs = [], others = [];
+    for (; i < S.files.length && S.files[i].kind === kind; i++){
+      (S.files[i].isImage ? imgs : others).push(S.files[i]);
     }
-    var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
-    // Workers が普通のファイルとして返すので、リンクで開ける
-    h += '<a class="doc-row" target="_blank" rel="noopener" href="/api/file/'
-       +   encodeURIComponent(f.id) + '">'
-       +   '<span class="doc-ic">' + ic + '</span>'
-       +   '<span class="doc-tx">'
-       +     '<span class="doc-nm">' + esc(f.name) + '</span>'
-       +     '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span>'
-       +   '</span>'
-       + '</a>';
-  });
+    h += '<div class="doc-kind">' + esc(kind) + '</div>';
+    if (imgs.length){
+      h += '<div class="pv-grid">' + imgs.map(function(f){
+        var id = encodeURIComponent(f.id);
+        return '<a class="pv-tile" target="_blank" rel="noopener" title="' + esc(f.name) + '" href="/api/file/' + id + '">'
+             +   '<span class="pv-img"><img src="/api/fpv/' + id + '" alt="" loading="lazy"'
+             +     ' onerror="this.parentNode.innerHTML=\'<span>🖼</span>\'"></span>'
+             +   '<span class="pv-cap">' + esc(pvCap_(f.date)) + '</span>'
+             + '</a>';
+      }).join('') + '</div>';
+    }
+    others.forEach(function(f){
+      var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
+      h += '<a class="doc-row" target="_blank" rel="noopener" href="/api/file/'
+         +   encodeURIComponent(f.id) + '">'
+         +   '<span class="doc-ic">' + ic + '</span>'
+         +   '<span class="doc-tx">'
+         +     '<span class="doc-nm">' + esc(f.name) + '</span>'
+         +     '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span>'
+         +   '</span>'
+         + '</a>';
+    });
+  }
   box.innerHTML = h;
 }
+
+/* ---------- 書類ボックスの写真をタイルで並べる ---------- */
+// 写真（画像ファイル）は3列のタイル、それ以外は今までどおりの一覧
+function pvCss_(){
+  if (document.getElementById('pvCss')) return;
+  var st = document.createElement('style');
+  st.id = 'pvCss';
+  st.textContent =
+      '.pv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 8px}'
+    + '.pv-tile{position:relative;display:block;width:100%;padding:0;margin:0;border:1.5px solid #e1e8ef;'
+    +   'border-radius:10px;overflow:hidden;background:#f3f6f8;cursor:pointer;text-decoration:none;color:inherit}'
+    + '.pv-tile:hover{border-color:#1f7f88}'
+    + '.pv-tile:active{opacity:.75}'
+    + '.pv-img{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1/1;font-size:28px}'
+    + '.pv-img img{width:100%;height:100%;object-fit:cover;display:block}'
+    + '.pv-cap{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 4px;font-size:11px;font-weight:600;'
+    +   'color:#fff;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.55));'
+    +   'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.pv-ld{width:18px;height:18px;border:2px solid #d6e0e3;border-top-color:#1f7f88;border-radius:50%;'
+    +   'animation:pvsp .7s linear infinite}'
+    + '@keyframes pvsp{to{transform:rotate(360deg)}}'
+    + '@media (max-width:380px){.pv-grid{grid-template-columns:repeat(2,1fr)}}'
+    + '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pv-tile{background:#0e1618;border-color:#2b393d}}';
+  document.head.appendChild(st);
+}
+
+// '2026/10/19 15:48' → '10/19 15:48'
+function pvCap_(d){
+  var m = String(d || '').match(/^\d{4}\/(\d{2}\/\d{2})(.*)$/);
+  return m ? m[1] + m[2] : String(d || '');
+}
+
 
 /* ---------- 故障報告に添える写真 ---------- */
 function pickPhoto(){ document.getElementById('photoFile').click(); }
@@ -1614,5 +1720,186 @@ function nextDevice(){
   S.photos = [];
   document.getElementById('kanri').value = '';
   show('vFind');
+}
+/* =============================================================
+ *  点検の期限（期限切れ・7日以内・期限が近い）
+ *    ① 機器カードの中に、部署点検・業者点検の次回予定日と残り日数
+ *    ② 機器を選ぶ画面の上に、部署ごとの「期限が近い機器」（部署点検だけ）
+ *    決まり：⚠️ 7日以内／🗓 周期の4分の1（最短7日・最長60日）より内側
+ * ============================================================= */
+
+var DUE = { dept:null, data:null, at:0, open:false, busy:false };
+var DUE_SHOW = 3;          // たたんでいるときに出す件数（QRのボタンを押し下げすぎないように）
+
+function dueCss_(){
+  if (document.getElementById('dueCss')) return;
+  var st = document.createElement('style');
+  st.id = 'dueCss';
+  st.textContent =
+      '.due-box{margin:0 0 12px;display:flex;flex-direction:column;gap:6px}'
+    + '.due-row{padding:8px 12px;border-radius:10px;font-size:14px;font-weight:700;line-height:1.45}'
+    + '.due-row small{display:block;font-weight:400;font-size:12px;opacity:.85}'
+    + '.due-over{background:#fdecea;color:#b03a2e}'
+    + '.due-week{background:#fff1dc;color:#b86200}'
+    + '.due-soon{background:#fff8d6;color:#7d6400}'
+    + '.due-ok{background:var(--accent-weak);color:var(--accent);font-weight:600}'
+    + '.due-chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px}'
+    + '.due-chip{flex:1;min-width:88px;text-align:center;padding:6px 4px;border-radius:10px;font-size:12px;font-weight:700}'
+    + '.due-chip b{display:block;font-size:18px;line-height:1.2}'
+    + '.due-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;margin-top:6px;'
+    +   'border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:400;font-size:14px;color:var(--ink)}'
+    + '.due-item .tx{flex:1;min-width:0}'
+    + '.due-item .nm{font-weight:700;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.due-item .pl{font-size:12px;color:var(--sub);display:block}'
+    + '.due-tag{flex:0 0 auto;font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}'
+    + '.due-rule{font-size:11px;color:var(--sub);margin-top:8px;line-height:1.5}'
+    + '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .due-over{background:#3a1f1c;color:#f3a497}'
+    +   ':root:not([data-theme="light"]) .due-week{background:#3a2a14;color:#f2b866}'
+    +   ':root:not([data-theme="light"]) .due-soon{background:#35301a;color:#e6d27a}'
+    +   ':root:not([data-theme="light"]) .due-item{background:#0e1618}}';
+  document.head.appendChild(st);
+}
+
+function dueMd_(s){
+  var m = String(s || '').match(/^\d{4}\/(\d{2})\/(\d{2})/);
+  return m ? Number(m[1]) + '/' + Number(m[2]) : String(s || '');
+}
+
+// 1行ぶんの文面
+function dueText_(x){
+  var md = dueMd_(x.next);
+  if (x.level === 'over')
+    return { c:'over', t:'⛔ ' + x.kind + 'の期限切れ',
+             s:md + ' 予定' + (x.days !== null ? '・' + (-x.days) + '日過ぎています' : '') };
+  if (x.level === 'week')
+    return { c:'week', t:'⚠️ ' + x.kind + (x.days === 0 ? 'は今日が期限' : 'まであと' + x.days + '日'), s:md };
+  if (x.level === 'soon')
+    return { c:'soon', t:'🗓 ' + x.kind + 'まであと' + x.days + '日', s:md };
+  return { c:'ok', t:'✅ ' + x.kind + ' 次回 ' + md, s:'あと' + x.days + '日' };
+}
+
+/* ---------- ① 機器カードの中 ---------- */
+function renderDue(){
+  dueCss_();
+  var host = document.getElementById('devDue');
+  if (!host){
+    host = document.createElement('div');
+    host.id = 'devDue';
+    var docs = document.getElementById('btnDocs');
+    docs.parentNode.insertBefore(host, docs);
+  }
+  var due = S.ctx && S.ctx.due;
+  var rows = [];
+  if (due){
+    ['dept', 'maker'].forEach(function(k){
+      var x = due[k];
+      if (!x || !x.next) return;
+      // 業者点検は、目印が付いたときだけ出す（ふだんは現場に関係が薄いので）
+      if (k === 'maker' && !x.level) return;
+      var t = dueText_(x);
+      rows.push('<div class="due-row due-' + t.c + '"><span>' + esc(t.t) + '</span>'
+        + '<small>' + esc(t.s) + '</small></div>');
+    });
+  }
+  host.className = rows.length ? 'due-box' : 'hide';
+  host.innerHTML = rows.join('');
+}
+
+/* ---------- ② 機器を選ぶ画面の上 ---------- */
+function dueHost_(){
+  var host = document.getElementById('dueCard');
+  if (host) return host;
+  host = document.createElement('div');
+  host.id = 'dueCard';
+  host.className = 'card';
+  var find = document.getElementById('vFind');
+  find.insertBefore(host, find.firstChild);
+  return host;
+}
+
+function dueSavedDept_(){
+  try{ return localStorage.getItem('mkdx_due_dept') || ''; }catch(e){ return ''; }
+}
+
+// 機器を選ぶ画面が出たら呼ぶ。1分以内に取ったものがあれば使い回す
+function dueOnFind_(){
+  dueCss_();
+  if (DUE.dept === null) DUE.dept = dueSavedDept_();
+  if (DUE.data && Date.now() - DUE.at < 60000){ renderDueCard(); return; }
+  loadDue();
+}
+
+function loadDue(){
+  if (DUE.busy) return;
+  DUE.busy = true;
+  var host = dueHost_();
+  if (!DUE.data) host.innerHTML = '<p class="sub center" style="margin:0"><span class="spin"></span>🗓 点検の期限を確認中…</p>';
+  dueFetch_(DUE.dept || '', function(d){
+    DUE.busy = false;
+    DUE.data = d; DUE.at = Date.now();
+    renderDueCard();
+  }, function(){
+    DUE.busy = false;
+    host.className = 'hide';      // 出せなくても点検はできる
+  });
+}
+
+function setDueDept(v){
+  DUE.dept = v; DUE.open = false;
+  try{ localStorage.setItem('mkdx_due_dept', v); }catch(e){}
+  DUE.data = null;
+  loadDue();
+}
+
+function renderDueCard(){
+  var host = dueHost_();
+  var d = DUE.data;
+  if (!d){ host.className = 'hide'; return; }
+  host.className = 'card';
+
+  var opt = '<option value="">🏢 すべての部署</option>' + d.depts.map(function(x){
+    return '<option' + (x === DUE.dept ? ' selected' : '') + '>' + esc(x) + '</option>';
+  }).join('');
+
+  var c = d.counts;
+  var h = '<h2 style="margin-bottom:8px">🗓 点検の期限</h2>'
+    + '<select onchange="setDueDept(this.value)" aria-label="部署">' + opt + '</select>'
+    + '<div class="due-chips">'
+    +   '<div class="due-chip due-over"><b>' + c.over + '</b>⛔ 期限切れ</div>'
+    +   '<div class="due-chip due-week"><b>' + c.week + '</b>⚠️ 7日以内</div>'
+    +   '<div class="due-chip due-soon"><b>' + c.soon + '</b>🗓 期限が近い</div>'
+    + '</div>';
+
+  if (!d.items.length){
+    h += '<p class="sub center" style="margin:8px 0 0">🎉 ' + (DUE.dept ? esc(DUE.dept) + 'に' : '')
+       + '期限の近い機器はありません</p>';
+  } else {
+    var list = DUE.open ? d.items : d.items.slice(0, DUE_SHOW);
+    list.forEach(function(x){
+      var t = dueText_({ kind:'', level:x.level, days:x.days, next:x.next });
+      var tag = x.level === 'over' ? (-x.days) + '日超過'
+              : (x.days === 0 ? '今日' : 'あと' + x.days + '日');
+      h += '<button type="button" class="due-item" onclick="loadDevice(\'' + esc(x.kanriNo) + '\')">'
+        +  '<span class="tx"><span class="nm">' + esc(x.name) + '</span>'
+        +  '<span class="pl">🏷 ' + esc(x.kanriNo) + '　' + (DUE.dept ? '' : '🏢 ' + esc(x.dept) + '　')
+        +  '📦 ' + esc(x.loc) + '　🗓 ' + esc(dueMd_(x.next)) + '</span></span>'
+        +  '<span class="due-tag due-' + t.c + '">' + tag + '</span></button>';
+    });
+    if (d.items.length > DUE_SHOW){
+      h += '<button class="btn-link" onclick="DUE.open=!DUE.open;renderDueCard()">'
+        + (DUE.open ? '▲ たたむ' : '▼ ほか ' + (d.items.length - DUE_SHOW) + ' 台も見る') + '</button>';
+    }
+  }
+  h += '<div class="due-rule">👆 押すとその機器の点検画面が開きます。部署点検だけを数えています。<br>'
+    + esc(d.rule) + '</div>';
+  host.innerHTML = h;
+}
+
+// 期限の一覧を取る（Workers版）
+function dueFetch_(dept, ok, ng){
+  api('/api/due?dept=' + encodeURIComponent(dept)).then(ok).catch(function(e){
+    if (e.message === 'AUTH') return;
+    ng(e);
+  });
 }
 `;

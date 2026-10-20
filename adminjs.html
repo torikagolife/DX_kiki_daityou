@@ -371,6 +371,14 @@ function openDlg(key, copy){
       }
       return;
     }
+    if (f.type === 'ro'){
+      // 見るだけの列（保存しても変わらない）
+      if (!isNew){
+        h += fld_(f, '<input type="text" value="' + esc(rec[f.col]) + '" disabled style="opacity:.6">')
+           + (f.note ? '<div class="sub" style="margin:-8px 0 12px">🔒 ' + esc(f.note) + '</div>' : '');
+      }
+      return;
+    }
     if (f.type === 'id'){
       if (!isNew) h += fld_(f, '<input type="text" value="' + esc(rec[f.col])
                            + '" disabled style="opacity:.6">');
@@ -773,10 +781,35 @@ function fbRenderDocs(){
     h += '<p class="sub" style="text-align:center;padding:18px 0">'
        + '🗒 この機器の書類はまだありません。</p>';
   } else {
+    pvCss_();
     var lastKind = '';
     FB.files.forEach(function(f, i){
-      if (f.kind !== lastKind){ h += '<div class="fb-kind">' + esc(f.kind) + '</div>';
-                                lastKind = f.kind; }
+      if (f.kind !== lastKind){
+        // 種別が変わったら、写真のタイルをこの種別の頭にまとめて出す
+        h += '<div class="fb-kind">' + esc(f.kind) + '</div>';
+        lastKind = f.kind;
+        var imgs = [];
+        for (var j = i; j < FB.files.length && FB.files[j].kind === f.kind; j++){
+          if (FB.files[j].isImage) imgs.push(j);
+        }
+        if (imgs.length){
+          h += '<div class="pv-grid">' + imgs.map(function(k){
+            var g = FB.files[k];
+            return '<div class="pv-cell">'
+                 +   '<button type="button" class="pv-tile" title="' + esc(g.name) + '" onclick="fbOpenFile(' + k + ')">'
+                 +     '<span class="pv-img" data-pv="' + esc(g.id) + '"><span class="pv-ld"></span></span>'
+                 +     '<span class="pv-cap">' + esc(pvCap_(g.date)) + '</span>'
+                 +   '</button>'
+                 +   '<span class="fb-ops pv-ops">'
+                 +     '<button type="button" title="代表写真にする" onclick="fbThumbFrom(' + k + ')">⭐</button>'
+                 +     '<button type="button" title="名前を変える" onclick="fbRename(' + k + ')">✏️</button>'
+                 +     '<button type="button" title="削除（ゴミ箱へ）" onclick="fbDelete(' + k + ')">🗑</button>'
+                 +   '</span>'
+                 + '</div>';
+          }).join('') + '</div>';
+        }
+      }
+      if (f.isImage) return;                // 写真は上のタイルに出した
       var ic = f.isImage ? '🖼' : (f.isPdf ? '📄' : '📎');
       h += '<div class="fb-row">'
          +   '<button type="button" class="fb-hit" onclick="fbOpenFile(' + i + ')">'
@@ -799,6 +832,79 @@ function fbRenderDocs(){
     });
   }
   fbEl('fbBody').innerHTML = h;
+  pvFill_();
+}
+
+/* ---------- 書類ボックスの写真をタイルで並べる ---------- */
+// 写真（画像ファイル）は3列のタイル、それ以外は今までどおりの一覧
+function pvCss_(){
+  if (document.getElementById('pvCss')) return;
+  var st = document.createElement('style');
+  st.id = 'pvCss';
+  st.textContent =
+      '.pv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 8px}'
+    + '.pv-tile{position:relative;display:block;width:100%;padding:0;margin:0;border:1.5px solid #e1e8ef;'
+    +   'border-radius:10px;overflow:hidden;background:#f3f6f8;cursor:pointer;text-decoration:none;color:inherit}'
+    + '.pv-tile:hover{border-color:#1f7f88}'
+    + '.pv-tile:active{opacity:.75}'
+    + '.pv-img{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1/1;font-size:28px}'
+    + '.pv-img img{width:100%;height:100%;object-fit:cover;display:block}'
+    + '.pv-cap{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 4px;font-size:11px;font-weight:600;'
+    +   'color:#fff;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.55));'
+    +   'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.pv-ld{width:18px;height:18px;border:2px solid #d6e0e3;border-top-color:#1f7f88;border-radius:50%;'
+    +   'animation:pvsp .7s linear infinite}'
+    + '@keyframes pvsp{to{transform:rotate(360deg)}}'
+    + '@media (max-width:380px){.pv-grid{grid-template-columns:repeat(2,1fr)}}'
+    + '.pv-cell{display:flex;flex-direction:column;gap:4px}'
+    + '.pv-ops{justify-content:center}'
+    + '@media (min-width:560px){#fbBody .pv-grid{grid-template-columns:repeat(4,1fr)}}';
+  document.head.appendChild(st);
+}
+
+// '2026/10/19 15:48' → '10/19 15:48'
+function pvCap_(d){
+  var m = String(d || '').match(/^\d{4}\/(\d{2}\/\d{2})(.*)$/);
+  return m ? m[1] + m[2] : String(d || '');
+}
+
+var PV = {};          // ファイルID → サムネイルの dataURL（'' は作れなかった）
+var PV_BUSY = false;
+
+// 画面に出ている写真のうち、まだ取っていないものを6枚ずつ取りにいく
+function pvFill_(){
+  var els = document.querySelectorAll('[data-pv]');
+  var want = [];
+  for (var i = 0; i < els.length; i++){
+    var id = els[i].getAttribute('data-pv');
+    if (PV[id] !== undefined) pvPaint_(id);
+    else if (want.indexOf(id) < 0) want.push(id);
+  }
+  if (!want.length || PV_BUSY) return;
+  PV_BUSY = true;
+  var batch = want.slice(0, 6);
+  google.script.run
+    .withSuccessHandler(function(d){
+      PV_BUSY = false;
+      var m = (d && d.map) || {};
+      batch.forEach(function(id){ PV[id] = m[id] || ''; pvPaint_(id); });
+      pvFill_();                                  // 残りがあれば続けて
+    })
+    .withFailureHandler(function(e){
+      PV_BUSY = false;
+      batch.forEach(function(id){ PV[id] = ''; pvPaint_(id); });
+      if (String(e && e.message).indexOf('AUTH') >= 0) { fbCloseDocs(); clrTk(); show('vPw'); }
+    })
+    .apiGetFilePreviews(S.token, batch);
+}
+
+function pvPaint_(id){
+  var els = document.querySelectorAll('[data-pv="' + id + '"]');
+  for (var i = 0; i < els.length; i++){
+    els[i].innerHTML = PV[id]
+      ? '<img src="' + PV[id] + '" alt="">'
+      : '<span>🖼</span>';
+  }
 }
 
 /* ---------- 書類を開く ---------- */
