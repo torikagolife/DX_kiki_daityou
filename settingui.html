@@ -23,8 +23,17 @@ body{margin:0;background:var(--bg);color:var(--ink);
 /* 一覧（1行1人） */
 .li{display:flex;gap:6px;margin-bottom:6px}
 .li input{flex:1;min-width:0}
-input[type=text],input[type=password],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+input[type=text],input[type=password],input[type=number],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;
   font-size:14px;font-family:inherit;background:#fff;color:var(--ink);width:100%}
+/* 週1のお知らせの設定 */
+.wkconf{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 6px}
+.wkconf label{display:block;font-size:12px;color:var(--sub);margin-bottom:4px}
+.wkconf select,.wkconf input{width:100%}
+.wkconf .nm{display:flex;align-items:center;gap:6px}
+.wkconf .nm input{flex:1;min-width:0}
+.wkconf .nm span{font-size:13px;color:var(--sub);white-space:nowrap}
+.wkconf .df{font-size:11px;color:var(--sub);margin-top:2px}
+@media (max-width:700px){.wkconf{grid-template-columns:repeat(2,minmax(0,1fr))}}
 input.bad{border-color:var(--ng);background:var(--ng-bg)}
 input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
 .empty{font-size:13px;color:var(--sub);padding:8px 0}
@@ -166,6 +175,20 @@ pre.res{background:#f7fafa;border:1px solid var(--line);border-radius:8px;paddin
           変えたら、現場には新しいパスワードを伝えてください。</p>
       </div>
 
+      <div class="card span2" id="bkCard">
+        <h2>💾 バックアップ</h2>
+        <p class="hint">毎週、スプレッドシートを丸ごとコピーしてドライブのフォルダに置きます（紐づくスクリプトも一緒）。
+          月に1回は xlsx も作ります。止まっていても誰も気づかないので、ここで時々確かめてください。</p>
+        <div id="bkBanner" class="banner hide"></div>
+        <div id="bkStatus" class="hint" style="margin:0 0 10px;color:var(--ink)"></div>
+        <div class="row">
+          <button class="sub" id="btnBkNow" onclick="backup('now')">💾 いますぐバックアップ</button>
+          <button class="sub" id="btnBkOn" onclick="backup('install')">⏰ 自動実行を設定</button>
+          <button class="sub" id="btnBkOff" onclick="backup('remove')">🧹 自動実行を外す</button>
+        </div>
+        <pre class="res" id="bkRes"></pre>
+      </div>
+
       <div class="card span2" id="smCard">
         <h2>📊 月次サマリー（幹部向け・メール）</h2>
         <p class="hint">毎月1日の朝に、先月の部署点検の実施率・点検の期限・故障・その他報告のまとめを、
@@ -178,6 +201,22 @@ pre.res{background:#f7fafa;border:1px solid var(--line);border-radius:8px;paddin
           <button class="sub" id="btnSmTest" onclick="summary('test')">🧪 先月分をテスト送信</button>
         </div>
         <pre class="res" id="smRes"></pre>
+      </div>
+
+      <div class="card span2" id="wkCard">
+        <h2>🗓 週1の点検期限のお知らせ（メール）</h2>
+        <p class="hint">毎週1回（曜日・時間は下で決められます）、点検期限切れ・7日以内に期限が来る機器と、長く故障中・修理中や貸出中のままの機器を、
+          月次サマリーと同じ人へメールで1通にまとめて送ります。該当が無い週も「該当なし」で届きます。</p>
+        <div class="wkconf" id="wkConf"></div>
+        <p class="hint" style="margin:0 0 12px">💡 変えたら下の「💾 保存」を押してください。自動送信が付いていれば、新しい曜日・時間で付け直します。</p>
+        <div id="wkStatus" class="hint" style="margin:0 0 10px;color:var(--ink)"></div>
+        <div class="row">
+          <button class="sub" id="btnWkOn" onclick="weekly('install')">⏰ 自動送信を設定</button>
+          <button class="sub" id="btnWkOff" onclick="weekly('remove')">🧹 自動送信を外す</button>
+          <button class="sub" id="btnWkPre" onclick="weekly('preview')">👀 いまの内容を見る</button>
+          <button class="sub" id="btnWkTest" onclick="weekly('test')">🧪 テスト送信</button>
+        </div>
+        <pre class="res" id="wkRes"></pre>
       </div>
 
       <div class="card span2">
@@ -333,8 +372,10 @@ function renderAll(){
   }
   $('hReply').textContent = def('MAIL_REPLY_TO').hint;
   renderToggles('tgMail', ['MAIL_NO_LINK'], false);
-  renderToggles('tgStop', ['MAIL_OFF', 'SUMMARY_OFF', 'LW_OFF'].filter(function(k){ return !!def(k); }), true);
+  renderToggles('tgStop', ['MAIL_OFF', 'SUMMARY_OFF', 'WEEKLY_OFF', 'LW_OFF'].filter(function(k){ return !!def(k); }), true);
   renderSummary();
+  renderWeekly();
+  renderBackup();
   renderView();
   renderLog();
   renderBanner();
@@ -465,6 +506,8 @@ function setDirty(on){
   $('btnTLw').disabled = on;
   $('btnTMail').disabled = on;
   if ($('btnSmTest')) $('btnSmTest').disabled = on;
+  if ($('btnWkTest')) $('btnWkTest').disabled = on;
+  if ($('btnWkOn')) $('btnWkOn').disabled = on;
   $('testHint').textContent = on ? '💡 テストは保存してからできます' : '';
 }
 function undo(){
@@ -527,6 +570,57 @@ function testSend(kind){
   if (kind === 'lw') run.apiTestLw(S.token, user); else run.apiTestMail(S.token, user);
 }
 
+/* ---------- バックアップ ---------- */
+function renderBackup(){
+  var st = S.data.backup;
+  if (!st){ $('bkCard').classList.add('hide'); return; }     // backup.gs がまだ入っていない
+  $('bkCard').classList.remove('hide');
+  var ban = $('bkBanner'), box = $('bkStatus');
+  if (st.error){
+    ban.classList.add('hide');
+    box.innerHTML = '❓ 状態を確認できませんでした：' + esc(st.error);
+    return;
+  }
+  var warn = '';
+  if (st.trigger === 0) warn = '⚠️ 自動実行が設定されていません。「⏰ 自動実行を設定」を押してください';
+  else if (!st.copies) warn = '⚠️ まだ1つもコピーがありません。「💾 いますぐバックアップ」で1つ作っておくと安心です';
+  else if (st.stale) warn = '⚠️ 最後のコピーが ' + st.ageDays + ' 日前です。自動実行が止まっているかもしれません（__LOG の BACKUP の行を確認）';
+  ban.textContent = warn;
+  ban.classList.toggle('hide', !warn);
+
+  var trig = st.trigger > 0 ? '✅ 自動実行：設定あり（' + esc(st.when) + '）'
+           : (st.trigger < 0 ? '❓ 自動実行：確認できませんでした' : '★ 自動実行：未設定');
+  box.innerHTML = trig + '<br>'
+    + '📄 最後のコピー：' + (st.lastAt ? esc(st.lastAt) + '（' + st.ageDays + ' 日前）' : 'まだありません') + '<br>'
+    + '🗂 残っているコピー：' + st.copies + ' 件（' + st.keep + ' 世代まで残す）'
+    + (st.url ? '　<a href="' + esc(st.url) + '" target="_blank" rel="noopener">📂 フォルダを開く</a>' : '') + '<br>'
+    + '📦 月1回の xlsx：' + (st.mail ? '✉️ ' + esc(st.mail) + ' へメール' : 'フォルダに置く（' + st.xlsx + ' 件）')
+    + '　最後に作った月 ' + (st.lastXlsxMonth ? esc(st.lastXlsxMonth.slice(0,4) + '/' + st.lastXlsxMonth.slice(4)) : 'まだ');
+  $('btnBkOff').disabled = !(st.trigger > 0);
+}
+
+function backup(act){
+  var user = $('fUser').value;
+  if (!user){ msg('🙋 下の「変更する人」を選んでください（記録に残します）', true); $('fUser').focus(); return; }
+  var ids = { now:'btnBkNow', install:'btnBkOn', remove:'btnBkOff' };
+  var el = $(ids[act]), label = el.innerHTML;
+  busy(true, el, label);
+  var out = $('bkRes'); out.style.display = 'none';
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, label);
+      out.textContent = r.msg; out.style.display = 'block';
+      S.data.backup = r.status;
+      renderBackup();
+      reloadLog();
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, label);
+      if (!authFail(e)){ out.textContent = '✖ ' + e.message; out.style.display = 'block'; }
+    })
+    .apiBackup(S.token, act, user);
+}
+
 /* ---------- 月次サマリー ---------- */
 function renderSummary(){
   var st = S.data.summary, box = $('smStatus');
@@ -566,6 +660,81 @@ function summary(act){
       if (!authFail(e)){ out.textContent = '✖ ' + e.message; out.style.display = 'block'; }
     })
     .apiSummary(S.token, act, user);
+}
+
+/* ---------- 週1の点検期限のお知らせ ---------- */
+function renderWeekly(){
+  var st = S.data.weekly, box = $('wkStatus');
+  if (!st){
+    $('wkCard').classList.add('hide');     // weekly.gs がまだ入っていない
+    return;
+  }
+  $('wkCard').classList.remove('hide');
+  renderWkConf();
+  var trig = st.trigger > 0
+    ? '✅ 自動送信：設定あり（' + esc(st.when) + '）' + (st.trigger > 1 ? '　⚠️ ' + st.trigger + '個あります。「設定」を押すと1つにまとまります' : '')
+    : (st.trigger < 0 ? '❓ 自動送信：確認できませんでした' : '★ 自動送信：未設定（「⏰ 自動送信を設定」を押してください）');
+  box.innerHTML = trig + '<br>'
+    + '✉️ 送る相手：' + (st.to.length ? st.to.length + ' 人（' + st.to.map(esc).join('、') + '）' : '<b style="color:var(--ng)">なし</b>') + '<br>'
+    + '🗓 最後に送った日：' + (st.last ? esc(st.last) : 'まだ')
+    + (S.orig.WEEKLY_OFF || S.orig.LW_OFF ? '<br><b style="color:var(--ng)">⏸ いまは止めているので、自動では送りません</b>' : '');
+  $('btnWkOff').disabled = !(st.trigger > 0);
+}
+
+// 曜日・時間・日数の入力欄（保存は下の「💾 保存」でまとめて）
+function renderWkConf(){
+  var keys = ['WEEKLY_DAY', 'WEEKLY_HOUR', 'WEEKLY_BROKEN_DAYS', 'WEEKLY_LEND_DAYS'].filter(function(k){ return !!def(k); });
+  var short = { WEEKLY_DAY:'📅 送る曜日', WEEKLY_HOUR:'⏰ 送る時間',
+                WEEKLY_BROKEN_DAYS:'🔧 長く故障中・修理中', WEEKLY_LEND_DAYS:'📤 長く貸出中' };
+  $('wkConf').innerHTML = keys.map(function(k){
+    var d = def(k), v = S.cur[k] || d.def, ctl;
+    if (d.type === 'select'){
+      ctl = '<select id="wk_' + k + '" onchange="wkSet(\'' + k + '\',this.value)" aria-label="' + esc(d.label) + '">'
+        + d.options.map(function(o){
+            return '<option value="' + esc(o[0]) + '"' + (o[0] === v ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+          }).join('') + '</select>';
+    } else {
+      ctl = '<div class="nm"><input type="number" id="wk_' + k + '" min="' + d.min + '" max="' + d.max + '" step="1" value="' + esc(v) + '"'
+        + ' oninput="wkSet(\'' + k + '\',this.value)" aria-label="' + esc(d.label) + '"><span>' + esc(d.unit) + '超</span></div>';
+    }
+    var dl = d.options ? (d.options.filter(function(o){ return o[0] === d.def; })[0] || [0, d.def])[1] : d.def + d.unit;
+    return '<div><label for="wk_' + k + '">' + short[k] + '</label>' + ctl
+      + '<div class="df" title="' + esc(d.hint) + '">標準：' + esc(dl) + '</div></div>';
+  }).join('');
+}
+function wkSet(k, v){
+  var d = def(k);
+  v = String(v == null ? '' : v).trim();
+  if (d.type === 'num'){
+    var bad = v !== '' && (!/^\d+$/.test(v) || Number(v) < d.min || Number(v) > d.max);
+    $('wk_' + k).classList.toggle('bad', bad);
+    if (v !== '' && !bad) v = String(Number(v));
+  }
+  S.cur[k] = (v === d.def) ? '' : v;
+  markDirty();
+}
+
+function weekly(act){
+  var user = $('fUser').value;
+  if (!user){ msg('🙋 下の「変更する人」を選んでください（記録に残します）', true); $('fUser').focus(); return; }
+  if (act === 'test' && !confirm('🗓 いまの時点の点検期限のお知らせを、送る相手全員に【テスト】として送ります。よろしいですか？')) return;
+  var ids = { install:'btnWkOn', remove:'btnWkOff', preview:'btnWkPre', test:'btnWkTest' };
+  var el = $(ids[act]), label = el.innerHTML;
+  busy(true, el, label);
+  var out = $('wkRes'); out.style.display = 'none';
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, label);
+      out.textContent = r.msg; out.style.display = 'block';
+      S.data.weekly = r.status;
+      renderWeekly();
+      if (act !== 'preview') reloadLog();
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, label);
+      if (!authFail(e)){ out.textContent = '✖ ' + e.message; out.style.display = 'block'; }
+    })
+    .apiWeekly(S.token, act, user);
 }
 
 // テストのあとは記録だけ取り直す（編集中の内容は消さない）

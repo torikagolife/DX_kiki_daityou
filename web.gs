@@ -40,6 +40,7 @@ function doGet(e) {
   else if (page === 'qr')      { file = 'qr';       title = APP_NAME + ' QRラベル'; now = 'qr'; }
   else if (page === 'settings'){ file = 'settingui'; title = APP_NAME + ' 設定';    now = 'settings'; }
   else if (page === 'report')  { file = 'reports';  title = APP_NAME + ' 帳票';     now = 'report'; }
+  else if (page === 'karte')   { file = 'kartes';   title = APP_NAME + ' カルテ';   now = 'karte'; }
   else                         { file = 'inspect';  title = APP_NAME;               now = 'inspect'; }
 
   const t = HtmlService.createTemplateFromFile(file);
@@ -219,10 +220,36 @@ function apiTestMail(token, userId) {
   return settingsTestMail(userId);
 }
 
+// バックアップ（backup.gs）の状態・いますぐバックアップ・自動実行の付け外し
+function apiBackup(token, act, userId) {
+  checkToken_(token, 'admin');
+  return settingsBackup(act, userId);
+}
+
 // 月次サマリー（summary.gs）の自動送信の付け外し・プレビュー・テスト送信
 function apiSummary(token, act, userId) {
   checkToken_(token, 'admin');
   return settingsSummary(act, userId);
+}
+
+// 週1の点検期限のお知らせ（weekly.gs）の自動送信の付け外し・プレビュー・テスト送信
+function apiWeekly(token, act, userId) {
+  checkToken_(token, 'admin');
+  return settingsWeekly(act, userId);
+}
+
+/* ---------- 機器のカルテ（karte.gs） ---------- */
+
+// 検索窓の言葉で機器を探す（管理番号がぴったりなら exact に入る）
+function apiSearchDevices(token, q) {
+  checkToken_(token, 'admin');
+  return searchDevices(q);
+}
+
+// 1台ぶんのカルテ
+function apiGetKarte(token, kanriNo) {
+  checkToken_(token, 'admin');
+  return getDeviceKarte(kanriNo);
 }
 
 /* ---------- マスタ管理API（管理PW） ---------- */
@@ -261,6 +288,12 @@ function apiGetLedger(token) {
 function apiGetHistory(token, opt) {
   checkToken_(token, 'admin');
   return getHistory(opt);
+}
+
+// 履歴を Excel で書き出す（historyxlsx.gs）。画面と同じ条件で、300件の制限なし
+function apiExportHistory(token, opt) {
+  checkToken_(token, 'admin');
+  return exportHistoryXlsx(opt);
 }
 
 function apiGetHistoryDetail(token, hid) {

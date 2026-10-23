@@ -32,11 +32,14 @@ const BK_FOLDER = '医療機器DX台帳_バックアップ';
 // コピーの名前の頭。これで始まるものだけを世代管理の対象にする
 const BK_PREFIX = '医療機器DX台帳_';
 
-// スプレッドシートのコピーを何世代残すか（週1なら8で約2か月）
-const BK_KEEP = 8;
+// スプレッドシートのコピーを何世代残すか（週1なら4で約1か月）
+//   ここは標準値。設定画面の「💾 バックアップ」で変えると、スクリプトプロパティ BK_KEEP が優先される
+//   （settings.gs の STG_EDIT の def も同じ値にしておく）
+const BK_KEEP = 4;
+const BK_KEEP_MAX = 52;
 
 // xlsx をメールで送る先。空にすると、メールの代わりにフォルダへ置く
-const BK_MAIL = 'ykubota@fff.or.jp';
+const BK_MAIL = '';
 
 // フォルダに置く xlsx を何か月ぶん残すか（BK_MAIL が空のときだけ使う）
 const BK_XLSX_KEEP = 12;
@@ -134,7 +137,7 @@ function bkCopy_() {
   const name = BK_PREFIX + bkStamp_();
   const copy = src.makeCopy(name, folder);
 
-  const trimmed = bkTrim_(folder, MimeType.GOOGLE_SHEETS, BK_KEEP);
+  const trimmed = bkTrim_(folder, MimeType.GOOGLE_SHEETS, bkKeep_());
   return {
     url: copy.getUrl(),
     message: '📄 ' + name + ' をコピーしました'
@@ -254,6 +257,18 @@ function bkLog_(level, message) {
 // 台帳の持ち主のメールアドレス。BK_MAIL が空のときの失敗メールの送り先。
 //   Session.getEffectiveUser() は userinfo.email の権限が要るので使わない
 //   （appsscript.json のスコープを増やさずに済むように、ドライブの権限で取る）
+// いま残す世代数（スクリプトプロパティ BK_KEEP。空かおかしな値なら標準値）
+function bkKeep_() {
+  const v = String(PropertiesService.getScriptProperties().getProperty('BK_KEEP') || '').trim();
+  const n = Number(v);
+  return (/^\d+$/.test(v) && n >= 1 && n <= BK_KEEP_MAX) ? n : BK_KEEP;
+}
+
+// 残す世代数を減らしたときに、その場で古いコピーをゴミ箱へ（設定画面の保存から呼ぶ）
+function bkTrimNow_() {
+  return bkTrim_(bkFolder_(), MimeType.GOOGLE_SHEETS, bkKeep_());
+}
+
 function bkOwner_() {
   try {
     const o = DriveApp.getFileById(SpreadsheetApp.getActive().getId()).getOwner();
@@ -312,7 +327,7 @@ function backupCheck() {
       }
       return n + ' 件' + (last ? '（最新 ' + last.getName() + '）' : '');
     };
-    log.push('  コピー   : ' + count(MimeType.GOOGLE_SHEETS) + ' / 残す数 ' + BK_KEEP);
+    log.push('  コピー   : ' + count(MimeType.GOOGLE_SHEETS) + ' / 残す数 ' + bkKeep_());
     log.push('  xlsx     : ' + count(MimeType.MICROSOFT_EXCEL));
   } else {
     log.push('  （まだありません。backupNow を実行すると作られます）');

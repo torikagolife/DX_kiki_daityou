@@ -8,6 +8,33 @@
 /* ワイドモニタでは広く使う。狭い画面では画面幅に合わせる */
 .wrap{ max-width:min(1760px, 97vw); }
 #tbl{ min-width:100%; }
+
+/* ===== 印刷（🖨 印刷のときだけ #printArea を出す） ===== */
+#printArea{ display:none; }
+@media print{
+  .wrap, .ov{ display:none !important; }
+  #printArea{ display:block; color:#000; font-size:9.5px; }
+  body{ background:#fff; margin:0; }
+  @page{ size:A4 landscape; margin:9mm 8mm; }
+}
+#printArea h1{ font-size:15px; margin:0 0 2px; }
+#printArea .pmeta{ font-size:9.5px; color:#333; margin:0 0 6px; display:flex; justify-content:space-between; gap:12px; }
+#printArea table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+#printArea th, #printArea td{ border:1px solid #888; padding:2px 4px; vertical-align:top; word-break:break-all; }
+#printArea th{ background:#e8eef3; font-weight:700; }
+#printArea thead{ display:table-header-group; }      /* 見出しをページごとに繰り返す */
+#printArea tr{ page-break-inside:avoid; break-inside:avoid; }
+#printArea tr.ng td{ background:#fdecea; }
+#printArea tr.tr td{ background:#fff4e0; }
+#printArea .memo{ color:#444; }
+#printArea .pnote{ margin-top:6px; font-size:9px; color:#333; }
+#printArea .sign{ float:right; border-collapse:collapse; margin:0 0 6px 12px; width:auto; table-layout:auto; }
+#printArea .sign td{ width:58px; height:42px; }
+#printArea .sign th{ width:58px; font-weight:400; }
+@media print{
+  #printArea th{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  #printArea tr.ng td, #printArea tr.tr td{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+}
 </style>
 </head>
 <body>
@@ -44,6 +71,8 @@
       <button class="btn" onclick="search()">🔍 検索</button>
       <button class="btn-sub" onclick="clearAll()">🧹 クリア</button>
       <button class="btn" onclick="openAdd()">✨ アクション登録</button>
+      <button class="btn-sub" id="btnXlsx" onclick="exportXlsx()" title="いまの条件で全件を Excel に（300件の制限なし）">📥 Excel</button>
+      <button class="btn-sub" onclick="printList()" title="画面に出ている履歴を A4 横で印刷">🖨 印刷</button>
       <span class="cnt" id="cnt"></span>
     </div>
 
@@ -97,9 +126,38 @@
   </div>
 </div>
 
-<script>var INIT_HID = <?!= JSON.stringify(initHid) ?>;</script>
+
+<!-- ===== 書類ボックス（見るだけ。追加・削除はマスタ管理の機器から） ===== -->
+<div class="ov" id="ovDocs" style="z-index:1005" onclick="if(event.target===this)closeDocs()">
+  <div class="dlg" style="max-width:600px">
+    <h2 id="docsTitle">📎 書類ボックス</h2>
+    <div class="sub" id="docsSub" style="margin:-4px 0 10px"></div>
+    <div id="docsBody"></div>
+    <div class="row">
+      <button class="btn-sub" onclick="closeDocs()">✖️ 閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 写真・書類を大きく見る ===== -->
+<div class="ov" id="ovView" style="z-index:1010" onclick="if(event.target===this)closeView()">
+  <div class="dlg" style="max-width:820px">
+    <h2 id="viewTitle" style="word-break:break-all"></h2>
+    <div id="viewBody"></div>
+    <div class="row">
+      <button class="btn-sub" onclick="closeView()">✖️ 閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 印刷用（画面には出ない） ===== -->
+<div id="printArea"></div>
+
+<script>var INIT_HID = <?!= JSON.stringify(initHid) ?>;
+var INIT_ID = <?!= JSON.stringify(initId) ?>;      // ?id=管理番号 で開かれたら、その機器で絞り込む（カルテから）
+var NAV_URL = <?!= JSON.stringify(navUrl) ?>;</script>
 <script>
-var S = { token:'', data:null, detail:null, actx:null, dev:null };
+var S = { token:'', data:null, detail:null, actx:null, dev:null, opt:null };
 
 function esc(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -184,6 +242,11 @@ function doLogin(){
 
 /* ---------- 一覧 ---------- */
 function search(){
+  // ?id= で開かれたときは、最初の1回だけ管理番号に入れておく
+  if (typeof INIT_ID === 'string' && INIT_ID.trim() && INIT_ID !== 'undefined'){
+    document.getElementById('fNo').value = INIT_ID.trim();
+    INIT_ID = '';
+  }
   var opt = {
     kanriNo: document.getElementById('fNo').value.trim(),
     actId  : document.getElementById('fAct').value,
@@ -191,6 +254,7 @@ function search(){
     to     : document.getElementById('fTo').value,
     limit  : 300
   };
+  S.opt = opt;                       // Excel・印刷は、いま画面に出ている条件で行う
   google.script.run
     .withSuccessHandler(function(d){
       S.data = d;
@@ -237,12 +301,15 @@ function render(){
        + '🔍 該当なし</td></tr>';
   }
 
-  d.rows.forEach(function(r){
+  d.rows.forEach(function(r, i){
     var body = r.trouble || r.memo || '';
     h += '<tr>'
       + '<td>' + esc(r.hid) + '</td>'
       + '<td>' + esc(r.date) + '</td>'
-      + '<td>' + esc(r.kanriNo) + '</td>'
+      + '<td>' + (r.kanriNo
+          ? '<a href="' + esc(NAV_URL + '?p=karte&id=' + encodeURIComponent(r.kanriNo)) + '" target="_blank" rel="noopener" '
+            + 'title="この機器のカルテを開く" style="font-weight:700">' + esc(r.kanriNo) + '</a>'
+          : '') + '</td>'
       + '<td>' + esc(r.devName) + '</td>'
       + '<td>' + esc(r.actName) + '</td>'
       + '<td>' + esc(r.userName) + '</td>'
@@ -250,15 +317,121 @@ function render(){
       + '<td style="max-width:260px;white-space:normal">'
       +   (body ? esc(body.length > 60 ? body.slice(0,60) + '…' : body)
                 : '<span class="sub">—</span>') + '</td>'
-            + '<td class="act">'
+            + '<td class="act" style="white-space:nowrap">'
       +   (r.hid
           ? '<button class="btn-sub btn-sm" onclick="openDlg(\'' + esc(r.hid) + '\')">'
             + (r.editable ? '🔎 詳細・修正' : '🔎 詳細') + '</button>'
           : '<span class="sub">—</span>')
+      +   (r.kanriNo
+          ? ' <button class="btn-sub btn-sm" title="この機器の書類ボックス" onclick="openDocsRow(' + i + ')">📎</button>'
+          : '')
       + '</td></tr>';
    });
 
   document.getElementById('tbl').innerHTML = h + '</tbody>';
+}
+
+/* =============================================================
+ *  Excel・印刷
+ *    どちらも「いま画面に出ている条件」（最後に検索した条件）で行う。
+ *    入力欄を変えただけで検索していないときは、検索してから。
+ * ============================================================= */
+
+function actNameOf_(id){
+  var a = (S.data && S.data.actions || []).filter(function(x){ return x.id === id; })[0];
+  return a ? a.name : id;
+}
+
+// 条件の説明（Excel の「条件」シートと印刷の見出しに使う）
+function condText_(){
+  var o = S.opt || {}, c = [];
+  if (o.kanriNo) c.push('管理番号：' + o.kanriNo);
+  if (o.actId) c.push('アクション：' + actNameOf_(o.actId));
+  if (o.from || o.to) c.push('期間：' + (o.from || '…') + ' 〜 ' + (o.to || '…'));
+  return c.length ? c.join('　／　') : 'なし（全件）';
+}
+
+// 入力欄が、最後に検索した条件と違っていないか
+function condChanged_(){
+  var o = S.opt || {};
+  return document.getElementById('fNo').value.trim() !== (o.kanriNo || '')
+      || document.getElementById('fAct').value !== (o.actId || '')
+      || document.getElementById('fFrom').value !== (o.from || '')
+      || document.getElementById('fTo').value !== (o.to || '');
+}
+
+function exportXlsx(){
+  if (!S.data || !S.data.rows.length){ msg('📭 書き出す履歴がありません', true); return; }
+  if (condChanged_()){ msg('🔍 条件を変えたら、先に「🔍 検索」を押してください', true); return; }
+  var el = document.getElementById('btnXlsx');
+  busy(true, el, '📥 Excel');
+  var o = S.opt || {};
+  var run = google.script.run
+    .withSuccessHandler(function(d){
+      busy(false, el, '📥 Excel');
+      var a = document.createElement('a');
+      a.href = 'data:' + d.mime + ';base64,' + d.data;
+      a.download = d.name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      msg('📥 ' + d.count + ' 件を書き出しました' + (d.partial ? '（多すぎるため新しい順に一部だけ）' : ''), !!d.partial);
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, '📥 Excel');
+      if (String(e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return; }
+      msg('⚠️ ' + e.message, true);
+    });
+  // サーバー側に apiExportHistory が無い（web.gs が古い・新しいバージョンでデプロイしていない）と、
+  // ここで止まってくるくるが回り続けるので、画面に理由を出す
+  if (typeof run.apiExportHistory !== 'function'){
+    busy(false, el, '📥 Excel');
+    msg('⚠️ サーバー側に Excel 書き出し（apiExportHistory）がありません。'
+      + 'web.gs を差し替えて、新しいバージョンでデプロイしてください', true);
+    return;
+  }
+  run.apiExportHistory(S.token, { kanriNo:o.kanriNo, actId:o.actId, from:o.from, to:o.to, actName:actNameOf_(o.actId) });
+}
+
+function printList(){
+  var d = S.data;
+  if (!d || !d.rows.length){ msg('📭 印刷する履歴がありません', true); return; }
+  if (condChanged_()){ msg('🔍 条件を変えたら、先に「🔍 検索」を押してください', true); return; }
+  if (d.shown < d.total && !confirm('🖨 画面に出ている新しい順の ' + d.shown + ' 件だけを印刷します（該当は ' + d.total + ' 件）。\n\n'
+      + '全部が必要なら、期間で区切って印刷するか「📥 Excel」を使ってください。\n\n印刷しますか？')) return;
+
+  var now = new Date();
+  var at = now.getFullYear() + '/' + ('0' + (now.getMonth() + 1)).slice(-2) + '/' + ('0' + now.getDate()).slice(-2)
+         + ' ' + ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+
+  var h = '<table class="sign"><tr><th>確認</th><th>責任者</th></tr><tr><td></td><td></td></tr></table>'
+    + '<h1>🕘 医療機器 履歴一覧</h1>'
+    + '<div class="pmeta"><span>条件：' + esc(condText_()) + '</span>'
+    + '<span>' + d.shown + ' 件' + (d.shown < d.total ? '（該当 ' + d.total + ' 件のうち新しい順）' : '')
+    + '　出力 ' + esc(at) + '</span></div>'
+    + '<div style="clear:both"></div>'
+    + '<table><colgroup>'
+    + '<col style="width:7%"><col style="width:7.5%"><col style="width:6.5%"><col style="width:17%">'
+    + '<col style="width:8%"><col style="width:8%"><col style="width:5%"><col>'
+    + '</colgroup><thead><tr>'
+    + '<th>履歴ID</th><th>実施日</th><th>管理番号</th><th>機器名</th>'
+    + '<th>アクション</th><th>実施者</th><th>判定</th><th>内容・備考</th>'
+    + '</tr></thead><tbody>';
+  d.rows.forEach(function(r){
+    var cls = r.judge === 'NG' ? 'ng' : (/故障報告|故障出し/.test(r.actName || '') ? 'tr' : '');
+    var body = '';
+    if (r.trouble) body += esc(r.trouble);
+    if (r.memo) body += (body ? '<br>' : '') + '<span class="memo">備考：' + esc(r.memo) + '</span>';
+    h += '<tr class="' + cls + '">'
+      + '<td>' + esc(r.hid) + '</td><td>' + esc(r.date) + '</td><td>' + esc(r.kanriNo) + '</td>'
+      + '<td>' + esc(r.devName) + '</td><td>' + esc(r.actName) + '</td><td>' + esc(r.userName) + '</td>'
+      + '<td style="text-align:center">' + esc(r.judge || '') + '</td><td>' + body + '</td></tr>';
+  });
+  h += '</tbody></table>'
+    + '<div class="pnote">赤＝総合判定 NG　オレンジ＝故障報告・故障出し　'
+    + '／ 点検項目ごとの結果は、各履歴の「🔎 詳細」か「📥 Excel」の「点検結果」シートで確認できます。'
+    + '　医療機器DX台帳 履歴画面より出力</div>';
+
+  document.getElementById('printArea').innerHTML = h;
+  setTimeout(function(){ window.print(); }, 50);
 }
 
 /* =============================================================
@@ -553,8 +726,10 @@ function renderDlg(){
                       + esc(d.memo) + '</div></div>';
     if (d.trouble) h += '<div class="fld"><label>😢 内容</label><div>'
                       + esc(d.trouble) + '</div></div>';
+    h += photoSection_(d);
     document.getElementById('dlgBody').innerHTML = h;
     document.getElementById('btnSave').classList.add('hide');
+    loadHisPhotos_(d);
     return;
   }
 
@@ -606,9 +781,11 @@ function renderDlg(){
 
   h += '<div class="fld"><label>📝 備考</label>'
      + '<input type="text" id="eMemo" value="' + esc(d.memo) + '"></div>';
+  h += photoSection_(d);
 
   document.getElementById('dlgBody').innerHTML = h;
   document.getElementById('btnSave').classList.remove('hide');
+  loadHisPhotos_(d);
 }
 
 function closeDlg(){
@@ -671,6 +848,250 @@ function save(){
         hid: d.hid, userId: userId, results: results,
         judge: document.getElementById('eJudge').value, memo: memo
       });
+  }
+}
+
+/* =============================================================
+ *  書類ボックスと、点検・報告で添付された写真
+ *    ・一覧の 📎 … その機器の書類ボックス（写真はタイル、それ以外は一覧）
+ *    ・詳細       … この記録で添付された写真（ファイル名が「履歴ID_」で始まるもの）
+ *    どちらもサムネイルを押すと大きく開く。見るだけ（追加・削除はマスタ管理の機器から）
+ * ============================================================= */
+
+var DOCS = { cache:{}, no:'', name:'', list:[], view:{ url:'', name:'' } };
+
+// 機器の書類一覧を取る（同じ機器は1分使い回す）
+function loadFiles_(kanriNo, ok, ng){
+  var c = DOCS.cache[kanriNo];
+  if (c && Date.now() - c.at < 60000){ ok(c.files); return; }
+  google.script.run
+    .withSuccessHandler(function(d){
+      var files = (d && d.files) || [];
+      DOCS.cache[kanriNo] = { at: Date.now(), files: files };
+      ok(files);
+    })
+    .withFailureHandler(function(e){
+      if (String(e.message).indexOf('AUTH') >= 0){ closeDocs(); closeDlg(); clrTk(); show('vPw'); return; }
+      if (ng) ng(e);
+    })
+    .apiListFiles(S.token, kanriNo);
+}
+
+// 写真のタイル（files の中の index で開く）
+function tiles_(files, idxs, openFn){
+  return '<div class="pv-grid">' + idxs.map(function(j){
+    var f = files[j];
+    return '<button type="button" class="pv-tile" title="' + esc(f.name) + '" onclick="' + openFn + '(' + j + ')">'
+         +   '<span class="pv-img" data-pv="' + esc(f.id) + '"><span class="pv-ld"></span></span>'
+         +   '<span class="pv-cap">' + esc(pvCap_(f.date)) + '</span>'
+         + '</button>';
+  }).join('') + '</div>';
+}
+
+/* ---------- 一覧の 📎 → 書類ボックス ---------- */
+function openDocsRow(i){
+  var r = S.data && S.data.rows[i];
+  if (r) openDocs(r.kanriNo, r.devName);
+}
+
+function openDocs(kanriNo, name){
+  pvCss_();
+  DOCS.no = String(kanriNo || ''); DOCS.name = String(name || '');
+  document.getElementById('docsTitle').textContent = '📎 ' + DOCS.no + ' の書類ボックス';
+  document.getElementById('docsSub').textContent = DOCS.name;
+  document.getElementById('docsBody').innerHTML =
+    '<div class="sub" style="padding:20px;text-align:center"><span class="spin"></span>📥 読み込み中…</div>';
+  document.getElementById('ovDocs').classList.add('on');
+  loadFiles_(DOCS.no, function(files){
+    DOCS.list = files;
+    renderDocs();
+  }, function(e){
+    document.getElementById('docsBody').innerHTML = '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+  });
+}
+
+function renderDocs(){
+  var files = DOCS.list, box = document.getElementById('docsBody');
+  if (!files.length){
+    box.innerHTML = '<p class="sub" style="text-align:center;padding:24px 0">'
+      + '🗒 この機器の書類はまだありません。</p>';
+    return;
+  }
+  var h = '', i = 0;
+  while (i < files.length){
+    var kind = files[i].kind, imgs = [], others = [];
+    for (; i < files.length && files[i].kind === kind; i++){
+      (files[i].isImage ? imgs : others).push(i);
+    }
+    h += '<div class="doc-kind-h">' + esc(kind) + '</div>';
+    if (imgs.length) h += tiles_(files, imgs, 'openDocFile');
+    others.forEach(function(j){
+      var f = files[j];
+      var ic = f.isPdf ? '📄' : '📎';
+      h += '<button type="button" class="doc-line" onclick="openDocFile(' + j + ')">'
+         +   '<span style="font-size:20px">' + ic + '</span>'
+         +   '<span style="min-width:0;text-align:left"><b style="display:block;word-break:break-all">' + esc(f.name) + '</b>'
+         +   '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span></span>'
+         + '</button>';
+    });
+  }
+  box.innerHTML = h;
+  pvFill_();
+}
+
+function openDocFile(j){ var f = DOCS.list[j]; if (f) openFile_(f); }
+function closeDocs(){ document.getElementById('ovDocs').classList.remove('on'); }
+
+/* ---------- 詳細：この記録で添付された写真 ---------- */
+function photoSection_(d){
+  return '<div class="fld"><label>📷 この記録で添付された写真</label>'
+       + '<div id="hisPhotos"><span class="sub"><span class="spin"></span>確認中…</span></div>'
+       + '<button type="button" class="btn-sub btn-sm" style="margin-top:8px" '
+       + 'onclick="openDocs(S.detail.kanriNo, S.detail.devName)">📎 この機器の書類ボックスを開く</button></div>';
+}
+
+function loadHisPhotos_(d){
+  pvCss_();
+  var hid = String(d.hid || '');
+  loadFiles_(d.kanriNo, function(files){
+    var box = document.getElementById('hisPhotos');
+    if (!box || !S.detail || S.detail.hid !== hid) return;    // 別の記録を開き直していたら何もしない
+    // 点検画面から添付した写真は「履歴ID_日付_元の名前」で入っている
+    var mine = [];
+    files.forEach(function(f, j){ if (String(f.name).indexOf(hid + '_') === 0) mine.push(j); });
+    DOCS.his = files;
+    if (!mine.length){
+      box.innerHTML = '<span class="sub">この記録に添付された写真はありません</span>';
+      return;
+    }
+    box.innerHTML = tiles_(files, mine, 'openHisFile')
+      + '<div class="sub">👆 押すと大きく開きます（' + mine.length + ' 枚）</div>';
+    pvFill_();
+  }, function(){
+    var box = document.getElementById('hisPhotos');
+    if (box) box.innerHTML = '<span class="sub">写真を確認できませんでした</span>';
+  });
+}
+
+function openHisFile(j){ var f = (DOCS.his || [])[j]; if (f) openFile_(f); }
+
+/* ---------- 大きく見る ---------- */
+function openFile_(f){
+  if (f.tooBig){ msg('⚠️ ' + f.name + ' は大きすぎて開けません（' + f.sizeText + '）', true); return; }
+  document.getElementById('viewTitle').textContent = (f.isImage ? '🖼 ' : '📄 ') + f.name;
+  var body = document.getElementById('viewBody');
+  // サムネイルが手元にあれば、先にそれを大きく出しておく（本物が届いたら差し替える）
+  body.innerHTML = PV[f.id]
+    ? '<img src="' + PV[f.id] + '" alt="" style="width:100%;border-radius:10px;filter:blur(2px);opacity:.7">'
+      + '<div class="sub" style="text-align:center;margin-top:6px"><span class="spin"></span>📥 元の写真を読み込み中…</div>'
+    : '<div class="sub" style="padding:30px;text-align:center"><span class="spin"></span>📥 読み込み中…</div>';
+  document.getElementById('ovView').classList.add('on');
+
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = 'data:' + d.mime + ';base64,' + d.data;
+      DOCS.view = { url: url, name: d.name };
+      if (String(d.mime).indexOf('image/') === 0){
+        body.innerHTML = '<a href="' + url + '" target="_blank" rel="noopener" title="新しいタブで開く">'
+          + '<img src="' + url + '" alt="' + esc(d.name) + '" style="width:100%;border-radius:10px;display:block"></a>'
+          + '<button type="button" class="btn-sub" style="width:100%;margin-top:10px" onclick="saveView()">⬇️ この写真を保存</button>';
+      } else {
+        body.innerHTML = '<p class="sub" style="text-align:center;padding:16px 0">'
+          + '📄 この形式は画面では開けません。保存して確認してください。</p>'
+          + '<button type="button" class="btn-sub" style="width:100%" onclick="saveView()">⬇️ ' + esc(d.name) + ' を保存</button>';
+      }
+    })
+    .withFailureHandler(function(e){
+      body.innerHTML = '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiGetFile(S.token, f.id);
+}
+
+function saveView(){
+  if (!DOCS.view.url) return;
+  var a = document.createElement('a');
+  a.href = DOCS.view.url; a.download = DOCS.view.name || 'file';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function closeView(){
+  document.getElementById('ovView').classList.remove('on');
+  document.getElementById('viewBody').innerHTML = '';
+  DOCS.view = { url:'', name:'' };
+}
+
+/* ---------- 書類ボックスの写真をタイルで並べる ---------- */
+// 写真（画像ファイル）は3列のタイル、それ以外は今までどおりの一覧
+function pvCss_(){
+  if (document.getElementById('pvCss')) return;
+  var st = document.createElement('style');
+  st.id = 'pvCss';
+  st.textContent =
+      '.pv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 8px}'
+    + '.pv-tile{position:relative;display:block;width:100%;padding:0;margin:0;border:1.5px solid #e1e8ef;'
+    +   'border-radius:10px;overflow:hidden;background:#f3f6f8;cursor:pointer;text-decoration:none;color:inherit}'
+    + '.pv-tile:hover{border-color:#1f7f88}'
+    + '.pv-tile:active{opacity:.75}'
+    + '.pv-img{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1/1;font-size:28px}'
+    + '.pv-img img{width:100%;height:100%;object-fit:cover;display:block}'
+    + '.pv-cap{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 4px;font-size:11px;font-weight:600;'
+    +   'color:#fff;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.55));'
+    +   'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.pv-ld{width:18px;height:18px;border:2px solid #d6e0e3;border-top-color:#1f7f88;border-radius:50%;'
+    +   'animation:pvsp .7s linear infinite}'
+    + '@keyframes pvsp{to{transform:rotate(360deg)}}'
+    + '@media (max-width:380px){.pv-grid{grid-template-columns:repeat(2,1fr)}}'
+    + '.doc-kind-h{font-size:11px;font-weight:800;color:var(--accent,#1f7f88);letter-spacing:.06em;margin:12px 0 6px;padding-bottom:3px;border-bottom:1.5px solid #dfe9ea}'
+    + '.doc-kind-h:first-child{margin-top:0}'
+    + '.doc-line{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;margin-bottom:6px;background:#fff;border:1.5px solid #e1e8ef;border-radius:9px;cursor:pointer;font:inherit;color:inherit}'
+    + '.doc-line:hover{border-color:#1f7f88}'
+    + '#hisPhotos .pv-grid{grid-template-columns:repeat(4,1fr)}'
+    + '@media (max-width:480px){#hisPhotos .pv-grid{grid-template-columns:repeat(3,1fr)}}';
+  document.head.appendChild(st);
+}
+
+// '2026/10/19 15:48' → '10/19 15:48'
+function pvCap_(d){
+  var m = String(d || '').match(/^\d{4}\/(\d{2}\/\d{2})(.*)$/);
+  return m ? m[1] + m[2] : String(d || '');
+}
+
+var PV = {};          // ファイルID → サムネイルの dataURL（'' は作れなかった）
+var PV_BUSY = false;
+
+// 画面に出ている写真のうち、まだ取っていないものを6枚ずつ取りにいく
+function pvFill_(){
+  var els = document.querySelectorAll('[data-pv]');
+  var want = [];
+  for (var i = 0; i < els.length; i++){
+    var id = els[i].getAttribute('data-pv');
+    if (PV[id] !== undefined) pvPaint_(id);
+    else if (want.indexOf(id) < 0) want.push(id);
+  }
+  if (!want.length || PV_BUSY) return;
+  PV_BUSY = true;
+  var batch = want.slice(0, 6);
+  google.script.run
+    .withSuccessHandler(function(d){
+      PV_BUSY = false;
+      var m = (d && d.map) || {};
+      batch.forEach(function(id){ PV[id] = m[id] || ''; pvPaint_(id); });
+      pvFill_();                                  // 残りがあれば続けて
+    })
+    .withFailureHandler(function(e){
+      PV_BUSY = false;
+      batch.forEach(function(id){ PV[id] = ''; pvPaint_(id); });
+      if (String(e && e.message).indexOf('AUTH') >= 0) { closeDocs(); closeDlg(); clrTk(); show('vPw'); }
+    })
+    .apiGetFilePreviews(S.token, batch);
+}
+
+function pvPaint_(id){
+  var els = document.querySelectorAll('[data-pv="' + id + '"]');
+  for (var i = 0; i < els.length; i++){
+    els[i].innerHTML = PV[id]
+      ? '<img src="' + PV[id] + '" alt="">'
+      : '<span>🖼</span>';
   }
 }
 </script>

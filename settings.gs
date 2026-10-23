@@ -12,7 +12,14 @@
  *         MAIL_NO_LINK  メールに管理画面のリンクを入れない
  *         INSPECT_PW    点検画面のパスワード（GAS版も Cloudflare 版も、これ1つを見る）
  *         SUMMARY_OFF   月次サマリーを止める
+ *         WEEKLY_OFF    週1の点検期限のお知らせを止める
+ *         WEEKLY_DAY / WEEKLY_HOUR / WEEKLY_BROKEN_DAYS / WEEKLY_LEND_DAYS
+ *                       週1のお知らせの曜日・時台・「長く故障中」「長く貸出中」の日数
+ *                       （空なら標準値。曜日・時台を変えたら、自動送信が付いていれば付け直す）
  *    ＋ 月次サマリー（summary.gs）の自動送信の付け外し・プレビュー・テスト送信
+ *    ＋ 週1の点検期限のお知らせ（weekly.gs）の自動送信の付け外し・プレビュー・テスト送信
+ *    ＋ バックアップ（backup.gs）の状態・いますぐバックアップ・自動実行の付け外し
+ *         BK_KEEP       バックアップを何世代残すか（空なら backup.gs の標準値 4。減らしたら保存の時点で古い分をゴミ箱へ）
  *    ② 見るだけ（「設定あり／なし」だけ。値は画面に出さない）
  *         LINE WORKS の接続情報・パスワード類・合言葉など
  *    ③ 変更の記録
@@ -54,6 +61,25 @@ const STG_EDIT = [
   { key: 'SUMMARY_OFF',   type: 'flag', group: 'stop',
     label: '月次サマリーを止める', icon: '📊',
     hint: '毎月1日の月次サマリーのメールだけ止まります。故障の通知はそのまま届きます。' },
+  { key: 'WEEKLY_OFF',    type: 'flag', group: 'stop',
+    label: '週1の点検期限のお知らせを止める', icon: '🗓',
+    hint: '週1の点検期限のお知らせのメールだけ止まります。故障の通知はそのまま届きます。' },
+  // 週1のお知らせ（weekly.gs）。def は weekly.gs の WK_DEF_* と同じにしておく
+  { key: 'WEEKLY_DAY',    type: 'select', group: 'weekly', def: 'MONDAY',
+    label: '週1のお知らせを送る曜日', icon: '📅', hint: '',
+    options: [['MONDAY', '月曜'], ['TUESDAY', '火曜'], ['WEDNESDAY', '水曜'], ['THURSDAY', '木曜'],
+              ['FRIDAY', '金曜'], ['SATURDAY', '土曜'], ['SUNDAY', '日曜']] },
+  { key: 'WEEKLY_HOUR',   type: 'select', group: 'weekly', def: '8',
+    label: '週1のお知らせを送る時間', icon: '⏰', hint: 'Google の都合で、その時台のどこかで届きます（8時台なら 8:00〜8:59）。',
+    options: Array.from({ length: 24 }, function (_, h) { return [String(h), h + '時台']; }) },
+  { key: 'WEEKLY_BROKEN_DAYS', type: 'num', group: 'weekly', def: '30', min: 1, max: 365, unit: '日',
+    label: '週1のお知らせ：故障中・修理中がこの日数を超えたら載せる', icon: '🔧', hint: '' },
+  { key: 'WEEKLY_LEND_DAYS',   type: 'num', group: 'weekly', def: '14', min: 1, max: 365, unit: '日',
+    label: '週1のお知らせ：貸出中がこの日数を超えたら載せる', icon: '📤', hint: '' },
+  // バックアップ（backup.gs）。def は backup.gs の BK_KEEP と同じにしておく
+  { key: 'BK_KEEP',       type: 'num', group: 'backup', def: '4', min: 1, max: 52, unit: '世代',
+    label: 'バックアップを残す世代数', icon: '💾',
+    hint: '週1回コピーするので、4世代で約1か月前まで戻れます。減らすと、保存した時点で古いコピーをゴミ箱へ入れます。' },
   { key: 'INSPECT_PW',    type: 'secret', group: 'pw',
     label: '点検画面のパスワード', icon: '🔑',
     hint: '現場共通のパスワード。GAS版と Cloudflare 版の点検画面の両方がこれを使います。'
@@ -131,7 +157,8 @@ function getSettings() {
 
   const edit = STG_EDIT.map(function (d) {
     return { key: d.key, type: d.type, group: d.group, label: d.label, icon: d.icon,
-             hint: d.hint, value: stgRead_(d, all[d.key]) };
+             hint: d.hint, value: stgRead_(d, all[d.key]),
+             def: d.def || '', min: d.min, max: d.max, unit: d.unit || '', options: d.options || null };
   });
 
   const view = STG_VIEW.map(function (d) {
@@ -159,8 +186,94 @@ function getSettings() {
     users   : stgUsers_(),
     log     : stgLogRead_(STG_LOG_SHOW),
     maxList : STG_MAX_LIST,
-    summary : stgSummaryStatus_()
+    summary : stgSummaryStatus_(),
+    weekly  : stgWeeklyStatus_(),
+    backup  : stgBackupStatus_()
   };
+}
+
+/* =============================================================
+ *  バックアップ（backup.gs）の状態と操作
+ *    backup.gs には手を入れず、その定数と関数をここから使う
+ * ============================================================= */
+
+const STG_BK_STALE_DAYS = 8;     // 最後のコピーがこれより古ければ「止まっているかも」と出す
+
+function stgBackupStatus_() {
+  try {
+    if (typeof BK_FOLDER === 'undefined') return null;      // backup.gs が無い
+    const out = {
+      folder: BK_FOLDER, keep: (typeof bkKeep_ === 'function' ? bkKeep_() : BK_KEEP), mail: BK_MAIL || '', when: '',
+      trigger: 0, copies: 0, last: '', lastAt: '', ageDays: null, stale: false,
+      xlsx: 0, lastXlsxMonth: String(stgProps_().getProperty('BK_LAST_XLSX') || ''),
+      url: ''
+    };
+    try { out.when = '毎週' + bkWeekdayName_(BK_WEEKDAY) + ' ' + BK_HOUR + '時台'; } catch (e) {}
+    try {
+      out.trigger = ScriptApp.getProjectTriggers().filter(function (t) {
+        return t.getHandlerFunction() === 'backupScheduled';
+      }).length;
+    } catch (e) { out.trigger = -1; }
+
+    const it = DriveApp.getFoldersByName(BK_FOLDER);
+    let folder = null;
+    while (it.hasNext()) { const f = it.next(); if (!f.isTrashed()) { folder = f; break; } }
+    if (!folder) return out;
+    out.url = folder.getUrl();
+
+    const scan = function (mime) {
+      let n = 0, last = null;
+      const fs = folder.getFilesByType(mime);
+      while (fs.hasNext()) {
+        const x = fs.next();
+        if (x.isTrashed() || x.getName().indexOf(BK_PREFIX) !== 0) continue;
+        n++;
+        if (!last || x.getDateCreated() > last.getDateCreated()) last = x;
+      }
+      return { n: n, last: last };
+    };
+    const sh = scan(MimeType.GOOGLE_SHEETS);
+    out.copies = sh.n;
+    if (sh.last) {
+      const at = sh.last.getDateCreated();
+      out.last = sh.last.getName();
+      out.lastAt = Utilities.formatDate(at, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
+      out.ageDays = Math.floor((Date.now() - at.getTime()) / 86400000);
+      out.stale = out.ageDays > STG_BK_STALE_DAYS;
+    }
+    out.xlsx = scan(MimeType.MICROSOFT_EXCEL).n;
+    return out;
+  } catch (e) {
+    return { error: (e && e.message) ? e.message : String(e) };
+  }
+}
+
+/**
+ * 画面のボタンから
+ *   act = 'now'（いますぐコピー）/ 'install'（自動実行を設定）/ 'remove'（外す）/ 'status'（見るだけ）
+ */
+function settingsBackup(act, userId) {
+  if (typeof BK_FOLDER === 'undefined') throw new Error('backup.gs が入っていません');
+  if (act === 'status') return { msg: '', status: stgBackupStatus_() };
+  if (!userId) throw new Error('操作する人を選んでください');
+  const who = stgUserLabel_(userId);
+  let msg = '';
+  if (act === 'now') {
+    const r = backupNow();
+    msg = (r && r.message) ? r.message : '📄 コピーしました';
+    stgLog_('💾 いますぐバックアップ　by ' + who + '\n' + msg);
+  } else if (act === 'install') {
+    bkInstallTrigger();
+    msg = '✅ 毎週' + bkWeekdayName_(BK_WEEKDAY) + ' ' + BK_HOUR + '時台に自動でコピーするようにしました';
+    stgLog_('💾 バックアップの自動実行を設定　by ' + who);
+  } else if (act === 'remove') {
+    bkRemoveTrigger();
+    msg = '🧹 バックアップの自動実行を外しました';
+    stgLog_('💾 バックアップの自動実行を外しました　by ' + who);
+  } else {
+    throw new Error('知らない操作です: ' + act);
+  }
+  return { msg: msg, status: stgBackupStatus_() };
 }
 
 // 月次サマリーの状態（summary.gs が無くても設定画面は開けるように）
@@ -197,6 +310,44 @@ function settingsSummary(act, userId) {
          + r.ng.map(function (x) { return x.id + ' : ' + x.why; }).join('\n    ') : '');
     stgLog_('🧪 月次サマリー テスト送信　by ' + who + '\n' + text);
     return { msg: text, status: smStatus_() };
+  }
+  throw new Error('知らない操作です: ' + act);
+}
+
+// 週1のお知らせの状態（weekly.gs が無くても設定画面は開けるように）
+function stgWeeklyStatus_() {
+  try { return wkStatus_(); } catch (e) { return null; }
+}
+
+/* =============================================================
+ *  週1の点検期限のお知らせ（weekly.gs）を画面から動かす
+ *    act = 'install' / 'remove' / 'preview'（今の時点の本文を見る）/ 'test'（テスト送信）
+ * ============================================================= */
+
+function settingsWeekly(act, userId) {
+  if (!userId) throw new Error('操作する人を選んでください');
+  const who = stgUserLabel_(userId);
+  if (act === 'install') {
+    const msg = wkInstallTrigger();
+    stgLog_('🗓 週1の点検期限のお知らせの自動送信を設定　by ' + who);
+    return { msg: msg, status: wkStatus_() };
+  }
+  if (act === 'remove') {
+    const n = wkRemoveTrigger();
+    stgLog_('🗓 週1の点検期限のお知らせの自動送信を外しました　by ' + who);
+    return { msg: n ? '🧹 自動送信を外しました' : '（外す自動送信はありませんでした）', status: wkStatus_() };
+  }
+  if (act === 'preview') {
+    const b = wkBuild_();
+    return { msg: '件名：' + b.subject + '\n\n' + b.text, status: wkStatus_() };
+  }
+  if (act === 'test') {
+    const r = wkSend_(true);
+    const text = '✅ 送った : ' + r.ok.length + ' 人' + (r.ok.length ? '\n    ' + r.ok.join('\n    ') : '')
+      + (r.ng.length ? '\n✖ 送れなかった : ' + r.ng.length + ' 人\n    '
+         + r.ng.map(function (x) { return x.id + ' : ' + x.why; }).join('\n    ') : '');
+    stgLog_('🧪 週1の点検期限のお知らせ テスト送信　by ' + who + '\n' + text);
+    return { msg: text, status: wkStatus_() };
   }
   throw new Error('知らない操作です: ' + act);
 }
@@ -270,6 +421,24 @@ function stgValidate_(next) {
     next.INSPECT_PW = pw;
   }
 
+  // 数字・選択（週1のお知らせ）：標準値と同じなら空（＝プロパティを消す）にしておく
+  STG_EDIT.forEach(function (d) {
+    if (d.type !== 'num' && d.type !== 'select') return;
+    if (!Object.prototype.hasOwnProperty.call(next, d.key)) return;
+    let v = String(next[d.key] == null ? '' : next[d.key]).trim();
+    if (d.type === 'num') {
+      v = v.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+      if (v && (!/^\d+$/.test(v) || Number(v) < d.min || Number(v) > d.max)) {
+        errs.push(d.icon + ' ' + d.label + 'は ' + d.min + '〜' + d.max + ' の数字にしてください：' + v);
+      } else if (v) {
+        v = String(Number(v));
+      }
+    } else if (v && !d.options.some(function (o) { return o[0] === v; })) {
+      errs.push(d.icon + ' ' + d.label + 'の値がおかしいです：' + v);
+    }
+    next[d.key] = (v === d.def) ? '' : v;
+  });
+
   // 画面から来た項目だけ書き戻す（来ていない項目を空として保存しないように）
   if (Object.prototype.hasOwnProperty.call(next, 'LW_TO_USERS')) next.LW_TO_USERS = lw;
   if (Object.prototype.hasOwnProperty.call(next, 'MAIL_TO')) next.MAIL_TO = mail;
@@ -337,9 +506,40 @@ function saveSettings(p) {
     if (changes.length) {
       changes.forEach(function (c) { stgLog_(c + '　by ' + who); });
     }
-    return { changed: changes, stamp: stgStamp_(props.getProperties()) };
+    return { changed: changes, stamp: stgStamp_(props.getProperties()),
+             wkMoved: changes.some(function (c) { return /（WEEKLY_(DAY|HOUR)）/.test(c); }),
+             bkKeep : changes.some(function (c) { return /（BK_KEEP）/.test(c); }) };
   });
 
+  // 週1のお知らせの曜日・時台を変えたら、自動送信が付いていれば新しい曜日・時台で付け直す
+  if (result.wkMoved) {
+    try {
+      const st = wkStatus_();
+      if (st.trigger > 0) {
+        wkInstallTrigger();
+        const m = '🗓 週1のお知らせの自動送信を ' + wkStatus_().when + ' に付け直しました';
+        stgLog_(m + '　by ' + who);
+        result.changed.push(m);
+      }
+    } catch (e) {
+      result.changed.push('⚠️ 週1のお知らせの自動送信を付け直せませんでした（設定画面で「⏰ 自動送信を設定」を押してください）：' + e.message);
+    }
+  }
+  // バックアップの世代数を変えたら、その場で多すぎる古いコピーをゴミ箱へ
+  if (result.bkKeep) {
+    try {
+      const n = bkTrimNow_();
+      if (n) {
+        const m = '💾 古いバックアップ ' + n + ' 件をゴミ箱へ入れました（残す数 ' + bkKeep_() + '）';
+        stgLog_(m + '　by ' + who);
+        result.changed.push(m);
+      }
+    } catch (e) {
+      result.changed.push('⚠️ 古いバックアップを片付けられませんでした（次の自動バックアップのときに片付きます）：' + e.message);
+    }
+  }
+  delete result.wkMoved;
+  delete result.bkKeep;
   return result;
 }
 
@@ -364,6 +564,14 @@ function stgDiffText_(def, before, after) {
     if (del.length) parts.push('削除 ' + del.join(', '));
     if (!parts.length) parts.push('並び順を変更');
     return name + '：' + parts.join(' ／ ') + '（計 ' + a.length + ' 人）';
+  }
+  if (def.type === 'num' || def.type === 'select') {
+    const show = function (v) {
+      const x = v ? v : def.def;
+      const o = def.options ? def.options.filter(function (p) { return p[0] === x; })[0] : null;
+      return (o ? o[1] : x + (def.unit || '')) + (v ? '' : '（標準）');
+    };
+    return name + '：' + show(before) + ' → ' + show(after);
   }
   return name + '：' + (before ? before : '（空）') + ' → ' + (after ? after : '（空）');
 }

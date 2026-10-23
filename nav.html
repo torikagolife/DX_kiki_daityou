@@ -6,6 +6,12 @@
 .nav a.on{background:var(--accent,#1f7f88);color:#fff;border-color:var(--accent,#1f7f88)}
 .nav a:hover{border-color:var(--accent,#1f7f88)}
 .nav a:active{opacity:.7}
+/* 機器を探す（どの画面からでも管理番号・機器名でカルテへ） */
+.nav .navq{margin-left:auto;display:flex;align-items:center}
+.nav .navq input{width:220px;max-width:46vw;padding:7px 12px;border-radius:999px;font-size:13px;font-family:inherit;
+  border:1px solid var(--line,#dfe9ea);background:var(--card,#fff);color:inherit;outline:none}
+.nav .navq input:focus{border-color:var(--accent,#1f7f88)}
+@media (max-width:640px){.nav .navq{margin-left:0;width:100%}.nav .navq input{width:100%;max-width:none}}
 @media print{.nav{display:none!important}}
 </style>
 <div class="nav">
@@ -16,4 +22,25 @@
   <a href="<?= navUrl ?>?p=qr"       class="<?= (navNow==='qr')      ? 'on' : '' ?>"<?= (navNow==='qr')      ? ' aria-current="page"' : '' ?>>🏷 QR</a>
   <a href="<?= navUrl ?>?p=report"   class="<?= (navNow==='report')  ? 'on' : '' ?>"<?= (navNow==='report')  ? ' aria-current="page"' : '' ?>>📑 帳票</a>
   <a href="<?= navUrl ?>?p=settings" class="<?= (navNow==='settings')? 'on' : '' ?>"<?= (navNow==='settings')? ' aria-current="page"' : '' ?>>🛠 設定</a>
+  <a href="<?= navUrl ?>?p=karte"    class="<?= (navNow==='karte')   ? 'on' : '' ?>"<?= (navNow==='karte')   ? ' aria-current="page"' : '' ?>>🩺 カルテ</a>
+  <form class="navq" role="search" action="<?= navUrl ?>" method="get" target="_top"
+        onsubmit="return navGo_(this)">
+    <input type="hidden" name="p" value="karte">
+    <input type="search" name="id" placeholder="🔍 管理番号・機器名でカルテへ" autocomplete="off"
+           aria-label="機器を探してカルテを開く" enterkeyhint="search">
+  </form>
 </div>
+<script>
+// 検索窓：Enter でカルテ（?p=karte&id=…）を開く。空なら何もしない
+function navGo_(f){
+  var v = String(f.elements.namedItem('id').value || '').trim();
+  if (!v) return false;
+  try{
+    var a = document.createElement('a');
+    a.href = f.action + '?p=karte&id=' + encodeURIComponent(v);
+    a.target = '_top';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    return false;
+  }catch(e){ return true; }      // うまくいかなければ、ふつうのフォーム送信に任せる
+}
+</script>

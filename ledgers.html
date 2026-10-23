@@ -228,7 +228,10 @@ td.docs-col{ text-align:center; padding:4px 6px; }
 }
 
 /* ===================== 印刷 ===================== */
+a.kt-link{ color:#1a5d8f; font-weight:700; text-decoration:none; }
+a.kt-link:hover{ text-decoration:underline; }
 @media print{
+  a.kt-link{ color:inherit; font-weight:inherit; }
   header .navs, .nav, .filters, .srch, #kpis, #dueRule, #err, .bar button,
   .ov, th.docs-col, td.docs-col, #scTop { display:none !important; }
   body{ background:#fff; font-size:10px; }
@@ -334,6 +337,7 @@ td.docs-col{ text-align:center; padding:4px 6px; }
   </div>
 </div>
 
+<script>var NAV_URL = <?!= JSON.stringify(navUrl) ?>;</script>
 <script>
 var S = { token:'', data:null, filter:'', sort:{ col:'kanriNo', asc:true },
           files:[], viewUrl:'', viewName:'' };
@@ -581,6 +585,10 @@ function render(){
       } else if (c.k === 'nextMaker'){
         h += dueTd(v, r._overMaker, r._dueMaker);
         return;
+      } else if (c.k === 'kanriNo' && v){
+        // 管理番号はカルテへのリンク（別タブ。台帳の絞り込みはそのまま残る）
+        td = '<a class="kt-link" href="' + esc(NAV_URL + '?p=karte&id=' + encodeURIComponent(v)) + '" target="_blank" rel="noopener" '
+           + 'title="この機器のカルテを開く">' + esc(v) + '</a>';
       } else if (c.k === 'years'){
         td = v ? esc(v) + '年' : '<span class="none">—</span>';
       } else {

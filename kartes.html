@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>機器のカルテ</title>
+<style>
+/* ===================== 基本 ===================== */
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ margin:0; padding:0; }
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",
+              "Noto Sans JP","Yu Gothic",Meiryo,sans-serif;
+  background:#eef2f6; color:#1c2b36; font-size:14px; line-height:1.6;
+}
+/* nav.html が参照する色 */
+:root{ --card:#fff; --line:#cfd9e2; --sub:#536574; --accent:#1a5d8f; }
+.hide{ display:none !important; }
+.sub{ color:#7b8a99; font-size:12px; }
+.none{ color:#c3ccd5; }
+a{ color:#1a5d8f; }
+
+header{
+  background:linear-gradient(135deg,#1a5d8f 0%,#14486e 100%);
+  color:#fff; padding:14px 16px 12px; box-shadow:0 2px 8px rgba(0,0,0,.18);
+}
+header h1{ margin:0; font-size:17px; font-weight:700; letter-spacing:.02em; }
+header .as{ font-size:11px; opacity:.82; margin-top:2px; }
+.wrap{ max-width:1200px; margin:0 auto; padding:12px; }
+.card{
+  background:#fff; border-radius:12px; padding:14px 16px;
+  box-shadow:0 1px 4px rgba(20,40,60,.1); margin-bottom:12px; min-width:0;
+}
+.card h2{ margin:0 0 10px; font-size:14px; font-weight:800; color:#14486e;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.card h2 .r{ margin-left:auto; font-weight:600; }
+
+label{ display:block; font-size:12px; font-weight:700; color:#536574; margin:12px 0 4px; }
+input[type=password],input[type=text],input[type=search]{
+  width:100%; padding:11px 12px; font-size:15px; font-family:inherit;
+  border:1.5px solid #cfd9e2; border-radius:8px; background:#fff; color:#1c2b36;
+}
+input:focus{ outline:none; border-color:#1a5d8f; }
+button{ font-family:inherit; cursor:pointer; }
+.btn{
+  padding:11px 18px; font-size:14px; font-weight:700;
+  background:#1a5d8f; color:#fff; border:none; border-radius:8px;
+}
+.btn:disabled,.btn-sub:disabled{ opacity:.55; cursor:default; }
+.btn-sub{
+  display:inline-flex; align-items:center; gap:4px;
+  padding:8px 12px; font-size:13px; font-weight:700; text-decoration:none;
+  background:#fff; color:#1a5d8f; border:1.5px solid #1a5d8f; border-radius:8px; white-space:nowrap;
+}
+.btn-sub:hover{ background:#f0f6fb; }
+.spin{
+  display:inline-block; width:12px; height:12px; margin-right:6px; vertical-align:-1px;
+  border:2px solid #cfd9e2; border-top-color:#1a5d8f; border-radius:50%;
+  animation:sp .7s linear infinite;
+}
+@keyframes sp{ to{ transform:rotate(360deg); } }
+.msg{ padding:10px 12px; border-radius:8px; margin:0 0 12px; font-size:13px; white-space:pre-wrap; }
+.msg.err{ background:#fdecea; color:#a3341f; }
+.msg.ok{ background:#e8f5ee; color:#1f6b45; }
+
+/* ===================== 検索 ===================== */
+.srch{ display:flex; gap:8px; }
+.srch input{ flex:1; min-width:0; }
+.res{ margin-top:10px; }
+.res-h{ font-size:12px; color:#536574; margin:0 0 6px; }
+.res-row{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  padding:9px 10px; margin-bottom:6px; background:#fff; color:inherit;
+  border:1.5px solid #e1e8ef; border-radius:9px; font:inherit;
+}
+.res-row:hover{ border-color:#1a5d8f; background:#f7fbfe; }
+.res-row b{ min-width:70px; color:#14486e; }
+.res-row .nm{ flex:1; min-width:0; }
+.res-row .nm div{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ===================== カルテ ===================== */
+.top{ display:flex; gap:16px; align-items:flex-start; }
+.ph{
+  flex:0 0 120px; width:120px; height:120px; border-radius:12px; overflow:hidden;
+  background:#f3f6f8; display:flex; align-items:center; justify-content:center; font-size:40px;
+  border:1.5px solid #e1e8ef;
+}
+.ph img{ width:100%; height:100%; object-fit:cover; display:block; }
+.top .tx{ flex:1; min-width:0; }
+.no{ font-size:24px; font-weight:800; color:#14486e; letter-spacing:.02em; line-height:1.2; }
+.dn{ font-size:17px; font-weight:700; margin:2px 0 6px; word-break:break-all; }
+.where{ font-size:13px; color:#536574; }
+.badges{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 0; }
+.pill{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; white-space:nowrap; }
+.pill.ok{ background:#e6f4ea; color:#1d6b3a; }
+.pill.ng{ background:#fdecea; color:#b3261e; }
+.pill.rp{ background:#fff4e0; color:#a35a00; }
+.pill.ld{ background:#eef3ff; color:#2f4fa8; }
+.pill.gy{ background:#eef0f2; color:#5f6b76; }
+.pill.tk{ background:#fff7d6; color:#8a6400; }
+.acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+
+.grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.grid > .card{ margin-bottom:0; }
+.span2{ grid-column:1 / -1; }
+
+.due{ display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:center; }
+.due .k{ font-weight:700; font-size:13px; }
+.due .v{ font-size:13px; }
+.lv{ display:inline-block; padding:1px 8px; border-radius:6px; font-size:12px; font-weight:800; margin-left:6px; }
+.lv.over{ background:#ffe2de; color:#b3261e; }
+.lv.week{ background:#ffe9cc; color:#a35a00; }
+.lv.soon{ background:#fff5c2; color:#7a6200; }
+.lv.fine{ background:#e6f4ea; color:#1d6b3a; }
+
+.kv{ width:100%; border-collapse:collapse; font-size:13px; }
+.kv th{ text-align:left; color:#536574; font-weight:700; width:8.5em; padding:5px 8px 5px 0; vertical-align:top; white-space:nowrap; }
+.kv td{ padding:5px 0; word-break:break-all; }
+.kv tr + tr th, .kv tr + tr td{ border-top:1px solid #eef2f6; }
+.kv2{ display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+
+.stats{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+.st{ background:#f5f8fb; border-radius:10px; padding:8px 10px; }
+.st .l{ font-size:11px; color:#536574; font-weight:700; }
+.st .n{ font-size:15px; font-weight:800; color:#14486e; }
+.st .s{ font-size:11px; color:#7b8a99; }
+
+/* 履歴 */
+.chips{ display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
+.chip{
+  padding:5px 12px; border-radius:999px; font-size:12px; font-weight:700;
+  background:#fff; color:#536574; border:1.5px solid #cfd9e2;
+}
+.chip.on{ background:#1a5d8f; color:#fff; border-color:#1a5d8f; }
+.tl{ list-style:none; margin:0; padding:0; }
+.tl li{
+  display:grid; grid-template-columns:92px 28px 1fr auto; gap:4px 10px; align-items:start;
+  padding:9px 4px; border-top:1px solid #eef2f6;
+}
+.tl li:first-child{ border-top:0; }
+.tl li.ng{ background:#fff7f6; }
+.tl .d{ font-size:13px; font-weight:700; color:#14486e; white-space:nowrap; }
+.tl .ic{ font-size:18px; line-height:1.2; text-align:center; }
+.tl .b{ min-width:0; }
+.tl .b .h{ font-weight:700; }
+.tl .b .h .who{ font-weight:400; color:#536574; font-size:12px; margin-left:6px; }
+.tl .b .c{ font-size:13px; white-space:pre-wrap; word-break:break-all; margin-top:2px; }
+.tl .b .m{ font-size:12px; color:#536574; white-space:pre-wrap; word-break:break-all; }
+.tl .b .w{ font-size:11px; color:#7b8a99; margin-top:2px; }
+.tl .go{ font-size:12px; text-decoration:none; padding:4px 8px; border:1px solid #cfd9e2; border-radius:6px; white-space:nowrap; }
+.jg{ display:inline-block; font-size:11px; font-weight:800; padding:0 6px; border-radius:5px; margin-left:6px; }
+.jg.OK{ background:#e6f4ea; color:#1d6b3a; }
+.jg.NG{ background:#fdecea; color:#b3261e; }
+.more{ text-align:center; margin-top:8px; }
+
+/* 書類（写真はタイル） */
+.pv-grid{ display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin:0 0 8px; }
+.pv-tile{ position:relative; display:block; width:100%; padding:0; margin:0; border:1.5px solid #e1e8ef;
+  border-radius:10px; overflow:hidden; background:#f3f6f8; cursor:pointer; color:inherit; }
+.pv-tile:hover{ border-color:#1a5d8f; }
+.pv-img{ display:flex; align-items:center; justify-content:center; width:100%; aspect-ratio:1/1; font-size:28px; }
+.pv-img img{ width:100%; height:100%; object-fit:cover; display:block; }
+.pv-cap{ position:absolute; left:0; right:0; bottom:0; padding:10px 6px 4px; font-size:11px; font-weight:600;
+  color:#fff; text-align:left; background:linear-gradient(transparent,rgba(0,0,0,.55));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pv-ld{ width:18px; height:18px; border:2px solid #d6e0e3; border-top-color:#1a5d8f; border-radius:50%; animation:sp .7s linear infinite; }
+.doc-kind-h{ font-size:11px; font-weight:800; color:#1a5d8f; letter-spacing:.06em; margin:12px 0 6px; padding-bottom:3px; border-bottom:1.5px solid #dfe9ea; }
+.doc-kind-h:first-child{ margin-top:0; }
+.doc-line{ display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; margin-bottom:6px; background:#fff;
+  border:1.5px solid #e1e8ef; border-radius:9px; cursor:pointer; font:inherit; color:inherit; text-align:left; }
+.doc-line:hover{ border-color:#1a5d8f; }
+
+/* 大きく見る */
+.ov{ position:fixed; inset:0; background:rgba(15,30,45,.55); display:none; align-items:flex-start;
+  justify-content:center; padding:24px 12px; z-index:1000; overflow:auto; }
+.ov.on{ display:flex; }
+.dlg{ background:#fff; border-radius:14px; padding:16px; width:100%; max-width:820px; box-shadow:0 10px 40px rgba(0,0,0,.3); }
+.dlg h2{ margin:0 0 10px; font-size:15px; word-break:break-all; }
+
+@media (max-width:760px){
+  .grid{ grid-template-columns:1fr; }
+  .kv2{ grid-template-columns:1fr; }
+  .pv-grid{ grid-template-columns:repeat(3,1fr); }
+  .top{ gap:12px; }
+  .ph{ flex-basis:84px; width:84px; height:84px; font-size:30px; }
+  .no{ font-size:20px; }
+  .tl li{ grid-template-columns:78px 24px 1fr; }
+  .tl .go{ grid-column:3; justify-self:start; }
+}
+
+/* ===================== 印刷（A4縦） ===================== */
+@media print{
+  @page{ size:A4 portrait; margin:10mm; }
+  body{ background:#fff; font-size:11px; }
+  header{ background:none; color:#000; box-shadow:none; padding:0 0 4px; border-bottom:2px solid #14486e; }
+  header .as{ opacity:1; }
+  .nav, #cSearch, .acts, .chips, .more, .tl .go, #cDocs, .ov, #msg{ display:none !important; }
+  .wrap{ max-width:none; padding:6px 0; }
+  .card{ box-shadow:none; border:1px solid #cfd9e2; padding:8px 10px; break-inside:avoid; margin-bottom:8px; }
+  #cHis{ break-inside:auto; }
+  .tl li{ break-inside:avoid; grid-template-columns:78px 22px 1fr; }
+  .grid{ grid-template-columns:1fr 1fr; gap:8px; }
+  .pill,.lv,.jg,.st,.tl li.ng{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🩺 機器のカルテ</h1>
+  <div class="as" id="asOf">1台の情報・点検期限・履歴・書類を1画面で</div>
+</header>
+
+<div class="wrap" style="padding-bottom:0">
+  <?!= include('nav', { navUrl: navUrl, navNow: navNow }); ?>
+</div>
+
+<div id="loading" class="wrap" style="text-align:center;padding-top:20px">
+  <span class="spin"></span>📥 読み込み中…
+</div>
+
+<!-- ========== ログイン ========== -->
+<div id="vPw" class="wrap hide" style="max-width:380px">
+  <div class="card">
+    <h2>🩺 機器のカルテ</h2>
+    <p class="sub">🔑 管理用パスワードを入力してください。</p>
+    <label for="pw">🔑 パスワード</label>
+    <input type="password" id="pw" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn" id="btnPw" onclick="doLogin()" style="width:100%;margin-top:14px">🔓 開く</button>
+  </div>
+</div>
+
+<!-- ========== メイン ========== -->
+<div id="vMain" class="wrap hide">
+  <div id="msg" class="msg hide"></div>
+
+  <div class="card" id="cSearch">
+    <div class="srch">
+      <input type="search" id="q" placeholder="🔍 管理番号・機器名・型番・製造番号・部署など" autocomplete="off"
+             onkeydown="if(event.key==='Enter')find()">
+      <button class="btn" id="btnFind" onclick="find()">🔍 探す</button>
+    </div>
+    <div class="res" id="results"></div>
+  </div>
+
+  <div id="kt" class="hide"></div>
+</div>
+
+<!-- ===== 写真・書類を大きく見る ===== -->
+<div class="ov" id="ovView" onclick="if(event.target===this)closeView()">
+  <div class="dlg">
+    <h2 id="viewTitle"></h2>
+    <div id="viewBody"></div>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn-sub" onclick="closeView()">✖️ 閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var INIT_ID = <?!= JSON.stringify(initId) ?>;
+var NAV_URL = <?!= JSON.stringify(navUrl) ?>;
+</script>
+<script>
+var S = { token:'', k:null, filter:'all', showAll:false, files:null, view:{ url:'', name:'' } };
+var HIS_FIRST = 100;      // 履歴は最初にこの件数まで出す（「もっと見る」で全部）
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function show(id){
+  ['vPw','vMain'].forEach(function(v){ $(v).classList.toggle('hide', v !== id); });
+  $('loading').classList.add('hide');
+}
+function msg(t, isErr){
+  var e = $('msg');
+  if (!t){ e.classList.add('hide'); return; }
+  e.textContent = t;
+  e.className = 'msg ' + (isErr ? 'err' : 'ok');
+}
+function busy(on, el, label){
+  if (!el) return;
+  el.disabled = on;
+  el.innerHTML = on ? '<span class="spin"></span>' + label : label;
+}
+function url_(q){ return NAV_URL + (q ? '?' + q : ''); }
+function authFail_(e){
+  if (String(e && e.message).indexOf('AUTH') >= 0){ clrTk(); show('vPw'); return true; }
+  return false;
+}
+function initId_(){
+  var v = (typeof INIT_ID === 'string') ? INIT_ID.trim() : '';
+  v = v.replace(/^["']+|["']+$/g, '').trim();
+  return (!v || v === 'undefined' || v === 'null') ? '' : v;
+}
+
+/* ---------- 認証（ほかの管理画面と同じトークン） ---------- */
+function tk(){ try{ return localStorage.getItem('mkdx_admin_tk') || ''; }catch(e){ return ''; } }
+function setTk(t){ S.token = t; try{ localStorage.setItem('mkdx_admin_tk', t); }catch(e){} }
+function clrTk(){ S.token = ''; try{ localStorage.removeItem('mkdx_admin_tk'); }catch(e){} }
+
+window.addEventListener('DOMContentLoaded', function(){
+  var t = tk();
+  if (!t){ show('vPw'); $('pw').focus(); return; }
+  S.token = t;
+  google.script.run
+    .withSuccessHandler(function(ok){
+      if (!ok){ clrTk(); show('vPw'); return; }
+      start_();
+    })
+    .withFailureHandler(function(){ clrTk(); show('vPw'); })
+    .pingToken(t, 'admin');
+});
+
+function doLogin(){
+  var el = $('btnPw'), pw = $('pw').value;
+  if (!pw) return;
+  busy(true, el, '🔓 開く');
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '🔓 開く');
+      if (!r.ok){ alert('🙅 パスワードが違います'); return; }
+      setTk(r.token); $('pw').value = '';
+      start_();
+    })
+    .withFailureHandler(function(e){ busy(false, el, '🔓 開く'); alert('⚠️ ' + e.message); })
+    .verifyPassword(pw, 'admin');
+}
+
+function start_(){
+  show('vMain');
+  var id = initId_();
+  INIT_ID = '';
+  if (id){ $('q').value = id; find(); }
+  else { $('q').focus(); }
+}
+
+/* =============================================================
+ *  検索
+ * ============================================================= */
+function find(){
+  var q = $('q').value.trim();
+  if (!q){ $('q').focus(); return; }
+  msg('');
+  var el = $('btnFind');
+  busy(true, el, '🔍 探す');
+  $('results').innerHTML = '';
+  google.script.run
+    .withSuccessHandler(function(r){
+      busy(false, el, '🔍 探す');
+      if (r.exact){ loadKarte(r.exact); return; }
+      if (r.items.length === 1){ loadKarte(r.items[0].kanriNo); return; }
+      renderResults(r);
+    })
+    .withFailureHandler(function(e){
+      busy(false, el, '🔍 探す');
+      if (!authFail_(e)) msg('⚠️ ' + e.message, true);
+    })
+    .apiSearchDevices(S.token, q);
+}
+
+function stPill_(s){
+  var p = 'ok', ic = '✅';
+  if (s === '廃棄' || s === '紛失'){ p = 'gy'; ic = '🗑'; }
+  else if (s === '故障中'){ p = 'ng'; ic = '🔧'; }
+  else if (s === '修理中'){ p = 'rp'; ic = '🛠'; }
+  else if (s === '貸出中'){ p = 'ld'; ic = '📤'; }
+  return '<span class="pill ' + p + '">' + ic + ' ' + esc(s || '—') + '</span>';
+}
+
+function renderResults(r){
+  var box = $('results');
+  if (!r.items.length){
+    box.innerHTML = '<p class="sub" style="margin:6px 0 0">🔍 「' + esc(r.q) + '」に当たる機器はありません。'
+      + '管理番号・機器名・型番・製造番号・資産番号・メーカー・部署・保管場所で探せます（空白で区切ると全部を含むもの）。</p>';
+    return;
+  }
+  var h = '<div class="res-h">🔍 「' + esc(r.q) + '」の候補 ' + r.total + ' 台'
+    + (r.total > r.items.length ? '（先頭の ' + r.items.length + ' 台。言葉を足して絞ってください）' : '')
+    + '　👆 押すとカルテを開きます</div>';
+  r.items.forEach(function(d){
+    h += '<button type="button" class="res-row" onclick="loadKarte(\'' + esc(d.kanriNo) + '\')">'
+      + '<b>' + esc(d.kanriNo) + '</b>'
+      + '<span class="nm"><div>' + esc(d.name) + '</div>'
+      + '<div class="sub">' + esc([d.maker, d.model, d.dept + (d.loc ? '・' + d.loc : '')].filter(String).join('　')) + '</div></span>'
+      + stPill_(d.status) + '</button>';
+  });
+  box.innerHTML = h;
+  $('kt').classList.add('hide');
+}
+
+/* =============================================================
+ *  カルテ
+ * ============================================================= */
+function loadKarte(no){
+  msg('');
+  $('results').innerHTML = '<div class="sub"><span class="spin"></span>📥 ' + esc(no) + ' のカルテを読み込み中…</div>';
+  google.script.run
+    .withSuccessHandler(function(k){
+      $('results').innerHTML = '';
+      S.k = k; S.filter = 'all'; S.showAll = false; S.files = null;
+      $('q').value = k.dev.kanriNo;
+      // アドレスバーも ?p=karte&id=… にしておく（ブックマーク・共有・戻るボタン用）
+      try{ google.script.history.push({ id:k.dev.kanriNo }, { p:'karte', id:k.dev.kanriNo }); }catch(e){}
+      renderKarte();
+      loadDocs_();
+    })
+    .withFailureHandler(function(e){
+      $('results').innerHTML = '';
+      if (!authFail_(e)) msg('⚠️ ' + e.message, true);
+    })
+    .apiGetKarte(S.token, no);
+}
+
+// ブラウザの「戻る」で前の機器へ
+try{
+  google.script.history.setChangeHandler(function(ev){
+    var id = ev && ev.location && ev.location.parameter && ev.location.parameter.id;
+    if (id && (!S.k || S.k.dev.kanriNo !== id)){ $('q').value = id; loadKarte(id); }
+  });
+}catch(e){}
+
+function dueRow_(label, x){
+  if (!x) return '';
+  var v;
+  if (!x.cycle) v = '<span class="none">周期の設定なし</span>';
+  else if (!x.last) v = '<span class="sub">' + x.cycle + 'か月ごと</span>　<b style="color:#a35a00">まだ記録がありません</b>';
+  else {
+    var lv = '';
+    if (x.level === 'over') lv = '<span class="lv over">⛔ ' + (-x.days) + '日超過</span>';
+    else if (x.level === 'week') lv = '<span class="lv week">⚠️ ' + (x.days === 0 ? '今日' : 'あと' + x.days + '日') + '</span>';
+    else if (x.level === 'soon') lv = '<span class="lv soon">🗓 あと' + x.days + '日</span>';
+    else if (x.days != null) lv = '<span class="lv fine">あと' + x.days + '日</span>';
+    v = '<span class="sub">' + x.cycle + 'か月ごと</span>　最終 ' + esc(x.last) + ' → 次回 <b>' + esc(x.next) + '</b>' + lv;
+  }
+  return '<div class="k">' + label + '</div><div class="v">' + v + '</div>';
+}
+
+function kvRows_(rows){
+  return '<table class="kv">' + rows.map(function(r){
+    var v = r[1];
+    return '<tr><th>' + r[0] + '</th><td>' + (v === '' || v == null ? '<span class="none">—</span>' : v) + '</td></tr>';
+  }).join('') + '</table>';
+}
+
+function renderKarte(){
+  var k = S.k, d = k.dev, st = k.stat, c = k.cnt;
+  $('asOf').textContent = '🩺 ' + d.kanriNo + ' ' + d.name + '　（' + k.at + ' 時点）';
+  document.title = d.kanriNo + ' ' + d.name + ' ─ 機器のカルテ';
+
+  var h = '';
+
+  /* ---- 頭 ---- */
+  h += '<div class="card"><div class="top">'
+     + '<div class="ph">' + (k.thumb ? '<img src="' + k.thumb + '" alt="">' : '🩺') + '</div>'
+     + '<div class="tx">'
+     +   '<div class="no">' + esc(d.kanriNo) + '</div>'
+     +   '<div class="dn">' + esc(d.name || '（機器名なし）') + '</div>'
+     +   '<div class="where">🏥 ' + esc(d.site || '—') + '　🏢 ' + esc(d.dept || '—') + '　📍 ' + esc(d.loc || '—') + '</div>'
+     +   '<div class="badges">' + stPill_(d.status)
+     +     (d.tokutei ? '<span class="pill tk">⭐ 特定保守管理医療機器</span>' : '')
+     +     (d.devClass ? '<span class="pill gy">⚠️ ' + esc(d.devClass) + '</span>' : '')
+     +     (st.since && st.since.days != null ? '<span class="sub" style="align-self:center">'
+             + esc(st.since.date) + ' の' + esc(st.since.act) + 'から ' + st.since.days + '日</span>' : '')
+     +   '</div>'
+     + '</div></div>'
+     + '<div class="acts">'
+     +   '<a class="btn-sub" href="' + esc(url_('p=history&id=' + encodeURIComponent(d.kanriNo))) + '" target="_top">🕘 履歴画面で開く（登録・修正・Excel）</a>'
+     +   '<a class="btn-sub" href="' + esc(url_('id=' + encodeURIComponent(d.kanriNo))) + '" target="_blank" rel="noopener">🔧 点検画面で開く</a>'
+     +   '<a class="btn-sub" href="' + esc(url_('p=admin')) + '" target="_top">⚙️ マスタで編集</a>'
+     +   '<button type="button" class="btn-sub" onclick="printKarte()">🖨 印刷</button>'
+     + '</div></div>';
+
+  h += '<div class="grid">';
+
+  /* ---- 点検期限 ---- */
+  h += '<div class="card"><h2>⏰ 点検期限</h2>';
+  if (k.due){
+    h += '<div class="due">' + dueRow_('✅ 部署点検', k.due.dept) + dueRow_('🛠 業者点検', k.due.maker) + '</div>';
+  } else {
+    h += '<p class="sub">期限を計算できませんでした</p>';
+  }
+  if (d.status === '廃棄' || d.status === '紛失') h += '<p class="sub" style="margin:8px 0 0">🗑 ' + esc(d.status) + 'の機器は期限を数えません</p>';
+  h += '</div>';
+
+  /* ---- まとめ ---- */
+  h += '<div class="card"><h2>📊 これまでのまとめ</h2><div class="stats">'
+     + stat_('🕘 履歴', c.all + ' 件', '')
+     + stat_('✅ 点検', (c.inspect || 0) + ' 回', c.ng ? '判定 NG ' + c.ng + ' 回' : '')
+     + stat_('🔧 過去1年の故障報告', st.trouble12 + ' 回', '')
+     + stat_('🔧 最後の故障', st.lastTrouble ? esc(st.lastTrouble.date) : '—', st.lastTrouble ? esc(st.lastTrouble.act) : 'なし')
+     + '</div></div>';
+
+  /* ---- 基本情報 ---- */
+  var yrs = d.start ? esc(d.start) + (d.years ? '（' + esc(d.years) + '年）' : '') : '';
+  h += '<div class="card span2"><h2>🗂 基本情報</h2><div class="kv2">'
+     + kvRows_([
+         ['🗂 機器区分', esc(d.cat)],
+         ['🏭 メーカー', esc(d.maker)],
+         ['🔤 型番', esc(d.model)],
+         ['🔢 製造番号', esc(d.serial)],
+         ['💴 資産番号', esc(d.asset)],
+         ['⚠️ クラス分類', esc(d.devClass)]
+       ])
+     + kvRows_([
+         ['🗓 使用開始日', yrs],
+         ['🧾 保守契約', esc(d.contract)],
+         ['🔁 点検周期', (d.cycleDept ? '部署 ' + esc(d.cycleDept) + 'か月' : '') + (d.cycleMaker ? '　業者 ' + esc(d.cycleMaker) + 'か月' : '')],
+         ['📋 点検表', esc(d.sheet)],
+         ['⭐ 特定保守', d.tokutei ? '〇（立入検査の帳票の対象）' : ''],
+         ['📝 備考', esc(d.memo)]
+       ])
+     + '</div></div>';
+
+  /* ---- 書類 ---- */
+  h += '<div class="card span2" id="cDocs"><h2>📎 書類ボックス<span class="r sub" id="docsCnt"></span></h2>'
+     + '<div id="docsBody"><span class="sub"><span class="spin"></span>📥 読み込み中…</span></div></div>';
+
+  /* ---- 履歴 ---- */
+  h += '<div class="card span2" id="cHis"><h2>🕘 履歴<span class="r sub">新しい順</span></h2>'
+     + '<div class="chips" id="chips"></div><ul class="tl" id="tl"></ul><div class="more" id="more"></div></div>';
+
+  h += '</div>';
+  $('kt').innerHTML = h;
+  $('kt').classList.remove('hide');
+  renderHis();
+}
+
+function stat_(l, n, s){
+  return '<div class="st"><div class="l">' + l + '</div><div class="n">' + n + '</div>'
+       + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
+}
+
+/* ---------- 履歴 ---------- */
+var GROUPS = [
+  ['all', 'すべて'], ['inspect', '✅ 点検'], ['trouble', '🔧 故障'], ['move', '🔀 導入・移設・貸出・廃棄'], ['other', '💬 その他報告']
+];
+
+function setFilter(g){ S.filter = g; S.showAll = false; renderHis(); }
+
+function renderHis(){
+  var k = S.k, c = k.cnt;
+  $('chips').innerHTML = GROUPS.map(function(g){
+    var n = g[0] === 'all' ? c.all : (c[g[0]] || 0);
+    return '<button type="button" class="chip' + (S.filter === g[0] ? ' on' : '') + '" onclick="setFilter(\'' + g[0] + '\')">'
+         + g[1] + ' ' + n + '</button>';
+  }).join('');
+
+  var list = k.his.filter(function(x){ return S.filter === 'all' || x.group === S.filter; });
+  if (!list.length){
+    $('tl').innerHTML = '<li style="display:block" class="sub">（記録はありません）</li>';
+    $('more').innerHTML = '';
+    return;
+  }
+  var view = S.showAll ? list : list.slice(0, HIS_FIRST);
+  $('tl').innerHTML = view.map(function(x){
+    var where = [x.dept, x.loc].filter(String).join('・');
+    return '<li class="' + (x.judge === 'NG' ? 'ng' : '') + '">'
+      + '<div class="d">' + esc(x.date) + '</div>'
+      + '<div class="ic">' + x.icon + '</div>'
+      + '<div class="b"><div class="h">' + esc(x.act)
+      +   (x.judge ? '<span class="jg ' + esc(x.judge) + '">' + esc(x.judge) + '</span>' : '')
+      +   '<span class="who">🙋 ' + esc(x.user || '—') + '</span></div>'
+      +   (x.trouble ? '<div class="c">' + esc(x.trouble) + '</div>' : '')
+      +   (x.memo ? '<div class="m">📝 ' + esc(x.memo) + '</div>' : '')
+      +   '<div class="w">' + esc(x.hid) + (where ? '　📍 ' + esc(where) : '') + (x.sheet ? '　📋 ' + esc(x.sheet) : '') + '</div>'
+      + '</div>'
+      + (x.hid ? '<a class="go" href="' + esc(url_('p=history&hid=' + encodeURIComponent(x.hid))) + '" target="_blank" rel="noopener" title="履歴画面で詳細（点検項目の結果・写真・修正）">🔎 詳細</a>' : '<span></span>')
+      + '</li>';
+  }).join('');
+  $('more').innerHTML = (list.length > view.length)
+    ? '<button type="button" class="btn-sub" onclick="S.showAll=true;renderHis()">⬇️ もっと見る（残り ' + (list.length - view.length) + ' 件）</button>'
+    : '';
+}
+
+/* ---------- 印刷 ---------- */
+function printKarte(){
+  if (!S.k) return;
+  S.showAll = true;            // 印刷は、いま選んでいる絞り込みの全件
+  renderHis();
+  setTimeout(function(){ window.print(); }, 60);
+}
+
+/* =============================================================
+ *  書類ボックス（見るだけ。追加・削除はマスタ管理の機器から）
+ * ============================================================= */
+function loadDocs_(){
+  var no = S.k.dev.kanriNo;
+  google.script.run
+    .withSuccessHandler(function(d){
+      if (!S.k || S.k.dev.kanriNo !== no) return;
+      S.files = (d && d.files) || [];
+      renderDocs_();
+    })
+    .withFailureHandler(function(e){
+      if (authFail_(e)) return;
+      var b = $('docsBody');
+      if (b) b.innerHTML = '<span class="sub">⚠️ 書類を読めませんでした：' + esc(e.message) + '</span>';
+    })
+    .apiListFiles(S.token, no);
+}
+
+function renderDocs_(){
+  var files = S.files, box = $('docsBody');
+  if (!box) return;
+  $('docsCnt').textContent = files.length ? files.length + ' 件' : '';
+  if (!files.length){
+    box.innerHTML = '<span class="sub">🗒 この機器の書類はまだありません（マスタ管理の機器から入れられます）</span>';
+    return;
+  }
+  var h = '', i = 0;
+  while (i < files.length){
+    var kind = files[i].kind, imgs = [], others = [];
+    for (; i < files.length && files[i].kind === kind; i++){
+      (files[i].isImage ? imgs : others).push(i);
+    }
+    h += '<div class="doc-kind-h">' + esc(kind) + '</div>';
+    if (imgs.length){
+      h += '<div class="pv-grid">' + imgs.map(function(j){
+        var f = files[j];
+        return '<button type="button" class="pv-tile" title="' + esc(f.name) + '" onclick="openDoc(' + j + ')">'
+             + '<span class="pv-img" data-pv="' + esc(f.id) + '"><span class="pv-ld"></span></span>'
+             + '<span class="pv-cap">' + esc(pvCap_(f.date)) + '</span></button>';
+      }).join('') + '</div>';
+    }
+    others.forEach(function(j){
+      var f = files[j];
+      h += '<button type="button" class="doc-line" onclick="openDoc(' + j + ')">'
+         + '<span style="font-size:20px">' + (f.isPdf ? '📄' : '📎') + '</span>'
+         + '<span style="min-width:0"><b style="display:block;word-break:break-all">' + esc(f.name) + '</b>'
+         + '<span class="sub">' + esc(f.sizeText) + '　' + esc(f.date) + '</span></span></button>';
+    });
+  }
+  box.innerHTML = h;
+  pvFill_();
+}
+
+function openDoc(j){
+  var f = S.files && S.files[j];
+  if (!f) return;
+  if (f.tooBig){ msg('⚠️ ' + f.name + ' は大きすぎて開けません（' + f.sizeText + '）', true); return; }
+  $('viewTitle').textContent = (f.isImage ? '🖼 ' : '📄 ') + f.name;
+  var body = $('viewBody');
+  body.innerHTML = PV[f.id]
+    ? '<img src="' + PV[f.id] + '" alt="" style="width:100%;border-radius:10px;filter:blur(2px);opacity:.7">'
+      + '<div class="sub" style="text-align:center;margin-top:6px"><span class="spin"></span>📥 元のファイルを読み込み中…</div>'
+    : '<div class="sub" style="padding:30px;text-align:center"><span class="spin"></span>📥 読み込み中…</div>';
+  $('ovView').classList.add('on');
+  google.script.run
+    .withSuccessHandler(function(d){
+      var url = 'data:' + d.mime + ';base64,' + d.data;
+      S.view = { url: url, name: d.name };
+      if (String(d.mime).indexOf('image/') === 0){
+        body.innerHTML = '<img src="' + url + '" alt="' + esc(d.name) + '" style="width:100%;border-radius:10px;display:block">'
+          + '<button type="button" class="btn-sub" style="width:100%;justify-content:center;margin-top:10px" onclick="saveView()">⬇️ この写真を保存</button>';
+      } else {
+        body.innerHTML = '<p class="sub" style="text-align:center;padding:16px 0">📄 この形式は画面では開けません。保存して確認してください。</p>'
+          + '<button type="button" class="btn-sub" style="width:100%;justify-content:center" onclick="saveView()">⬇️ ' + esc(d.name) + ' を保存</button>';
+      }
+    })
+    .withFailureHandler(function(e){
+      if (authFail_(e)) { closeView(); return; }
+      body.innerHTML = '<div class="msg err">⚠️ ' + esc(e.message) + '</div>';
+    })
+    .apiGetFile(S.token, f.id);
+}
+
+function saveView(){
+  if (!S.view.url) return;
+  var a = document.createElement('a');
+  a.href = S.view.url; a.download = S.view.name || 'file';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function closeView(){
+  $('ovView').classList.remove('on');
+  $('viewBody').innerHTML = '';
+  S.view = { url:'', name:'' };
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeView(); });
+
+/* ---------- 写真のサムネイル（6枚ずつ取りにいく） ---------- */
+function pvCap_(d){
+  var m = String(d || '').match(/^\d{4}\/(\d{2}\/\d{2})(.*)$/);
+  return m ? m[1] + m[2] : String(d || '');
+}
+var PV = {}, PV_BUSY = false;
+function pvFill_(){
+  var els = document.querySelectorAll('[data-pv]'), want = [];
+  for (var i = 0; i < els.length; i++){
+    var id = els[i].getAttribute('data-pv');
+    if (PV[id] !== undefined) pvPaint_(id);
+    else if (want.indexOf(id) < 0) want.push(id);
+  }
+  if (!want.length || PV_BUSY) return;
+  PV_BUSY = true;
+  var batch = want.slice(0, 6);
+  google.script.run
+    .withSuccessHandler(function(d){
+      PV_BUSY = false;
+      var m = (d && d.map) || {};
+      batch.forEach(function(id){ PV[id] = m[id] || ''; pvPaint_(id); });
+      pvFill_();
+    })
+    .withFailureHandler(function(e){
+      PV_BUSY = false;
+      batch.forEach(function(id){ PV[id] = ''; pvPaint_(id); });
+      authFail_(e);
+    })
+    .apiGetFilePreviews(S.token, batch);
+}
+function pvPaint_(id){
+  var els = document.querySelectorAll('[data-pv="' + id + '"]');
+  for (var i = 0; i < els.length; i++){
+    els[i].innerHTML = PV[id] ? '<img src="' + PV[id] + '" alt="">' : '<span>🖼</span>';
+  }
+}
+</script>
+</body>
+</html>
